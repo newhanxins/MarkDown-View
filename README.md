@@ -1,7 +1,7 @@
 
 # MD Viewer - Chrome Markdown 预览插件
 
-一个智能的 Chrome 浏览器扩展，能够自动检测并预览浏览器中打开的 Markdown 文件，支持源码与渲染视图的无缝切换。采用 Vite 构建，支持完全离线运行。
+一个智能的 Chrome 浏览器扩展，能够自动检测并预览浏览器中打开的 Markdown 文件，支持源码与渲染视图的无缝切换。采用 Vite 构建，核心解析库本地化，Mermaid 图表支持在线加载。
 
 ## 📋 目录
 
@@ -28,7 +28,9 @@
 - 📋 **复制功能**：快速复制 Markdown 源码到剪贴板
 - 💾 **下载功能**：下载原始 Markdown 文件
 - 🔒 **安全防护**：使用 DOMPurify 防止 XSS 攻击
-- ⚡ **离线可用**：所有依赖库已本地化，无需网络连接即可完美运行
+- 📑 **智能目录**：左侧自动生成导航栏，点击可平滑滚动定位
+- ✏️ **实时编辑**：支持在线修改 Markdown 内容，并提供重置功能
+- 📊 **Mermaid 支持**：自动渲染流程图、时序图等 Mermaid 图表（需联网）
 
 ### 支持的 Markdown 语法
 
@@ -41,13 +43,14 @@
 - ✅ 表格
 - ✅ 分隔线
 - ✅ 嵌套列表
+- ✅ **Mermaid 图表**（流程图、甘特图、类图等）
 
 ### 用户体验
 
 - 🎨 **现代化界面**：渐变色工具栏，清晰的视觉层次
 - 📱 **响应式设计**：完美适配桌面端和移动端
 - ⚡ **零配置**：安装即可使用，无需任何设置
-- 🚀 **轻量级**：体积小，加载速度快
+- 🚀 **轻量级**：核心体积小，加载速度快
 
 ---
 
@@ -95,10 +98,11 @@ md-view/
 
 ### 运行时依赖
 
-本项目通过 `npm` 管理依赖，构建时会自动打包进扩展程序中：
+本项目通过 `npm` 管理核心依赖，构建时会自动打包进扩展程序中：
 
-- `marked@^11.1.0`：Markdown 解析器
-- `dompurify@^3.0.6`：HTML sanitization 库
+- `marked@^11.1.0`：Markdown 解析器（本地打包）
+- `dompurify@^3.0.6`：HTML sanitization 库（本地打包）
+- `mermaid@10.x`：图表渲染库（**在线 CDN 加载**，以减小插件体积）
 
 ---
 
@@ -151,11 +155,16 @@ npm run build
 - ✅ 自动检测 .md 文件
 - ✅ 实时预览渲染
 - ✅ 源码/预览切换
+- ✅ Mermaid 图表支持
 
-## 代码示例
+## Mermaid 示例
 
-```javascript
-console.log('Hello, Markdown!');
+```mermaid
+graph TD;
+    A[开始] --> B{是否成功?};
+    B -- 是 --> C[结束];
+    B -- 否 --> D[重试];
+    D --> B;
 ```
 
 > 这是一个引用块
@@ -163,7 +172,7 @@ console.log('Hello, Markdown!');
 | 功能 | 状态 |
 |------|------|
 | 预览 | ✅ |
-| 编辑 | ❌ |
+| 编辑 | ✅ |
 ```
 
 在浏览器中打开该文件：
@@ -187,7 +196,7 @@ file:///你的路径/test.md
 - 检测文件类型
 - 解析 Markdown 内容
 - 渲染为 HTML 预览视图
-- 显示顶部工具栏
+- 显示顶部工具栏和左侧目录（如果有标题）
 
 #### 2. 切换视图模式
 
@@ -199,6 +208,8 @@ file:///你的路径/test.md
 | 📝 **源码** | 切换到原始 Markdown 文本视图 | - |
 | 📋 **复制** | 复制 Markdown 源码到剪贴板 | - |
 | 💾 **下载** | 下载原始 .md 文件 | - |
+| ✏️ **编辑** | 进入实时编辑模式 | - |
+| ↩️ **重置** | 恢复文件原始内容 | - |
 
 **操作步骤**：
 
@@ -206,18 +217,17 @@ file:///你的路径/test.md
 2. 当前激活的模式会高亮显示
 3. 文件名显示在工具栏右侧
 
-#### 3. 复制源码
+#### 3. 使用目录导航
 
-1. 点击 "📋 复制" 按钮
-2. 按钮会短暂显示 "✅ 已复制" 提示
-3. 内容已复制到剪贴板，可直接粘贴
+- 如果文档包含 H1-H3 标题，左侧会自动生成目录。
+- **点击目录项**，右侧内容会自动平滑滚动到对应位置。
 
-#### 4. 下载文件
+#### 4. 实时编辑
 
-1. 点击 "💾 下载" 按钮
-2. 浏览器会自动下载原始 .md 文件
-3. 文件名与原始文件保持一致
-
+1. 点击 "✏️ 编辑" 按钮进入编辑模式。
+2. 在文本框中修改内容，右侧预览会**实时同步更新**（有 500ms 延迟以防卡顿）。
+3. 点击 "✅ 完成" 退出编辑模式。
+4. 如果改乱了，点击 "↩️ 重置" 恢复原样。
 ### 高级用法
 
 #### 从 GitHub/GitLab 预览
@@ -287,48 +297,17 @@ http://localhost:8080/document.md
 
 ### 自定义配置
 
-#### 修改检测规则
+#### 修改功能开关
 
-编辑 `src/content.js` 中的 `isMarkdownFile()` 函数：
-
-```javascript
-function isMarkdownFile() {
-  const url = window.location.href;
-  const pathname = window.location.pathname;
-  
-  // 添加自定义检测规则
-  if (pathname.endsWith('.md') || 
-      pathname.endsWith('.markdown') ||
-      pathname.endsWith('.txt')) {  // 例如：也检测 .txt 文件
-    return true;
-  }
-  
-  // ... 其他检测逻辑
-}
-```
-
-#### 修改样式主题
-
-编辑 `src/content.css` 中的颜色变量：
-
-```css
-/* 修改工具栏渐变色 */
-#md-viewer-toolbar {
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-  /* 改为其他颜色，例如： */
-  /* background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%); */
-}
-```
-
-#### 修改默认行为
-
-在 `src/content.js` 中修改默认模式：
+在 `src/content.js` 顶部修改 `CONFIG` 对象：
 
 ```javascript
-// 默认显示源码模式（而非预览模式）
-let isPreviewMode = false;  // 改为 false
+const CONFIG = {
+  enableTOC: true,      // 关闭则不显示左侧目录
+  enableMermaid: true,  // 关闭则不渲染 Mermaid 图表
+  enableEditor: true    // 关闭则不显示编辑按钮
+};
 ```
-
 ### 图标配置
 
 准备三个 PNG 图标文件放置在 `public/icons/` 目录：
@@ -494,40 +473,26 @@ Compress-Archive -Path dist\* -DestinationPath md-viewer.zip
 
 ## ❓ 常见问题
 
-### Q1: 插件没有自动渲染 Markdown 文件？
+### Q1: 点击左侧目录没有反应？
+
+**原因**：通常是由于浏览器安全策略或代码逻辑问题。
+**解决**：请确保你使用的是最新版本的代码，我们已改用事件委托（Event Delegation）来处理目录点击，兼容性更好。
+
+### Q2: Mermaid 图表不显示？
+
+**原因**：Mermaid 库是通过 CDN 在线加载的。
+**解决**：
+1. 检查网络连接是否正常。
+2. 确认代码块语言标记为 `mermaid`（例如：```mermaid）。
+3. 检查浏览器控制台（F12）是否有加载错误。
+
+### Q3: 插件没有自动渲染 Markdown 文件？
 
 **可能原因**：
 
 1. **文件扩展名不正确**：确保文件以 `.md` 或 `.markdown` 结尾
 2. **Content-Type 不匹配**：某些服务器可能返回错误的 MIME 类型
 3. **插件未启用**：检查 `chrome://extensions/` 中插件是否已启用
-
-**解决方案**：
-
-```javascript
-// 在控制台检查
-console.log(window.location.pathname.endsWith('.md'));  // 应为 true
-console.log(document.contentType);  // 应为 text/plain 或 text/markdown
-```
-
-### Q2: 预览样式混乱或不正确？
-
-**可能原因**：
-
-1. **CSS 冲突**：页面的全局样式影响了预览
-2. **Markdown 语法错误**：某些特殊语法未被正确解析
-
-**解决方案**：
-
-```css
-/* 在 content.css 中添加更强的选择器优先级 */
-#md-preview-container h1 {
-  all: initial;  /* 重置所有样式 */
-  font-size: 2em !important;
-  /* ... 其他样式 */
-}
-```
-
 ### Q3: 如何禁用插件对特定网站的检测？
 
 **解决方案**：
@@ -596,36 +561,6 @@ function parseMarkdown(text) {
 }
 ```
 
-### Q6: 支持编辑 Markdown 吗？
-
-**当前版本**：❌ 不支持直接编辑
-
-**未来计划**：✅ 计划在 v2.0 中添加编辑功能
-
-**临时方案**：
-
-1. 点击 "📝 源码" 查看原始内容
-2. 点击 "📋 复制" 复制到编辑器
-3. 编辑后保存，重新加载页面
-
-### Q7: 如何处理大型 Markdown 文件？
-
-**性能建议**：
-
-- 对于超过 100KB 的文件，建议分块渲染
-- 使用虚拟滚动优化长文档
-- 考虑添加懒加载图片功能
-
-**代码示例**：
-
-```javascript
-// 检测文件大小
-if (rawText.length > 100000) {
-  console.warn('Large file detected, consider splitting');
-  // 实现分页或懒加载逻辑
-}
-```
-
 ---
 
 ## 🧰 技术栈
@@ -644,6 +579,7 @@ if (rawText.length > 100000) {
 |----|------|------|------|
 | **marked** | ^11.1.0 | Markdown 解析器 | npm 本地打包 |
 | **DOMPurify** | ^3.0.6 | HTML 安全过滤 | npm 本地打包 |
+| **Mermaid** | 10.x | 图表渲染 | **在线 CDN** |
 
 ### 为什么选择这些技术？
 
@@ -759,6 +695,15 @@ SOFTWARE.
 
 ## 📊 更新日志
 
+### v1.1.0 (2026-05-27)
+
+**功能增强**
+
+- ✅ 新增左侧目录导航（TOC），支持点击平滑滚动
+- ✅ 新增 Mermaid 图表支持（流程图、时序图等）
+- ✅ 新增实时编辑功能，支持一键重置
+- ⚡ 优化打包体积，Mermaid 改为在线加载
+
 ### v1.0.0 (2026-05-22)
 
 **首次发布**
@@ -769,21 +714,13 @@ SOFTWARE.
 - ✅ 复制和下载功能
 - ✅ 响应式设计
 - ✅ 安全防护（XSS 过滤）
-- ✅ 支持完全离线运行（依赖本地打包）
-
-**已知限制**：
-
-- ❌ 不支持实时编辑
-- ❌ 不支持数学公式（KaTeX/MathJax）
-- ❌ 不支持 Mermaid 图表
-
 **未来计划**：
 
 - 📅 v1.1.0：添加主题切换（亮色/暗色）
 - 📅 v1.2.0：支持数学公式渲染
 - 📅 v2.0.0：添加内置编辑器
-
 ---
 
 **⭐ 如果这个项目对你有帮助，请给个 Star！**
 ```
+

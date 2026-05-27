@@ -51,6 +51,23 @@
   font-weight: 500;
 }
 
+/* Markdown 预览样式 */
+#md-preview-container h1,
+#md-preview-container h2,
+#md-preview-container h3,
+#md-preview-container h4 {
+  /* 【关键修复】为标题增加滚动边距，抵消顶部固定工具栏的高度 (70px) + 一点额外间距 */
+  scroll-margin-top: 80px; 
+}
+
+#md-preview-container h1 {
+  font-size: 2em;
+  margin: 0.67em 0;
+  padding-bottom: 0.3em;
+  border-bottom: 1px solid #eaecef;
+  color: #24292e;
+}
+
 #md-preview-container,
 #md-source-container {
   margin-top: 70px;
@@ -245,5 +262,94 @@
   #md-source-container {
     margin-top: 100px;
     padding: 15px;
+  }
+}
+
+/* ... existing code ... */
+
+/* ==========================================
+   新增功能样式：左侧导航栏、编辑器与布局
+   ========================================== */
+
+#md-main-container {
+  margin-top: 70px;
+  display: flex; /* 使用 Flexbox 实现左右分栏 */
+  max-width: 1400px;
+  margin-left: auto;
+  margin-right: auto;
+  min-height: calc(100vh - 90px);
+  background: white;
+}
+
+#md-toc-sidebar {
+  width: 250px;
+  background: #f8f9fa;
+  border-right: 1px solid #eaecef;
+  padding: 20px;
+  overflow-y: auto;
+  box-sizing: border-box;
+  position: sticky; /* 滚动时固定在左侧 */
+  top: 70px;
+  height: calc(100vh - 80px);
+}
+
+.md-toc ul {
+  list-style: none;
+  padding: 0;
+}
+
+.md-toc a {
+  color: #24292e;
+  text-decoration: none;
+  font-size: 14px;
+  line-height: 1.5;
+  display: block; /* 确保点击区域足够大 */
+}
+
+.md-toc a:hover {
+  color: #0366d6;
+  text-decoration: underline;
+}
+
+#md-content-area {
+  flex: 1; /* 占据剩余空间 */
+  padding: 20px;
+  overflow-y: auto;
+}
+
+#md-editor-container {
+  width: 100%;
+  height: calc(100vh - 150px);
+  padding: 20px;
+  font-family: 'Consolas', monospace;
+  font-size: 14px;
+  border: 1px solid #dfe2e5;
+  border-radius: 6px;
+  resize: none; /* 禁止手动拖拽大小 */
+  outline: none;
+  background: #fafbfc;
+  box-sizing: border-box;
+}
+
+/* Mermaid 图表容器样式 */
+.mermaid-diagram {
+  text-align: center;
+  margin: 20px 0;
+  padding: 10px;
+  background: #fff;
+}
+
+/* 响应式调整：移动端适配 */
+@media (max-width: 768px) {
+  #md-main-container {
+    flex-direction: column;
+  }
+  #md-toc-sidebar {
+    width: 100%;
+    height: auto;
+    position: static;
+    border-right: none;
+    border-bottom: 1px solid #eaecef;
+    max-height: 200px; /* 移动端限制目录高度 */
   }
 }
