@@ -229,6 +229,7 @@ import DOMPurify from 'dompurify';
       <button id="md-toggle-btn" class="md-btn active">👁️ 预览</button>
       <button id="md-copy-btn" class="md-btn">📋 复制</button>
       <button id="md-download-btn" class="md-btn">💾 下载</button>
+      <button id="md-theme-btn" class="md-btn">🌙 暗色</button>
     `;
 
     // 如果开启了编辑器功能，添加编辑和重置按钮
@@ -368,8 +369,32 @@ import DOMPurify from 'dompurify';
     const toggleBtn = document.getElementById('md-toggle-btn');
     const editBtn = document.getElementById('md-edit-btn');
     const resetBtn = document.getElementById('md-reset-btn');
+    const themeBtn = document.getElementById('md-theme-btn');
     const tocSidebar = document.getElementById('md-toc-sidebar');
 
+    // --- 主题切换逻辑 ---
+    if (themeBtn) {
+      // 检查本地存储的主题偏好
+      const savedTheme = localStorage.getItem('md-viewer-theme');
+      if (savedTheme === 'dark') {
+        document.documentElement.setAttribute('data-theme', 'dark');
+        themeBtn.textContent = '☀️ 亮色';
+      }
+
+      themeBtn.addEventListener('click', () => {
+        const currentTheme = document.documentElement.getAttribute('data-theme');
+        if (currentTheme === 'dark') {
+          document.documentElement.removeAttribute('data-theme');
+          themeBtn.textContent = '🌙 暗色';
+          localStorage.setItem('md-viewer-theme', 'light');
+        } else {
+          document.documentElement.setAttribute('data-theme', 'dark');
+          themeBtn.textContent = '☀️ 亮色';
+          localStorage.setItem('md-viewer-theme', 'dark');
+        }
+      });
+    }
+    
     // --- 切换 预览/源码 模式 ---
     if (toggleBtn) {
       toggleBtn.addEventListener('click', () => {
