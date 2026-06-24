@@ -5,6 +5,12 @@ export default defineConfig({
   build: {
     outDir: 'dist',
     emptyOutDir: true, // 每次构建前清空 dist 目录
+    minify: 'terser', // 使用 terser 进行更激进的压缩
+    terserOptions: {
+      compress: {
+        drop_console: true, // 生产环境移除 console
+      },
+    },
     rollupOptions: {
       input: {
         content: resolve(__dirname, 'src/content.js'),
@@ -19,7 +25,7 @@ export default defineConfig({
             return 'content.css';
           }
           return '[name].[ext]';
-        }
+        },
       }
     },
     copyPublicDir: true // 确保 public 目录下的所有内容（包括 libs）都被拷贝

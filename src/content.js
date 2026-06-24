@@ -11,51 +11,218 @@ import DOMPurify from 'dompurify';
   // ==========================================
   // 1. 初始化配置与全局变量
   // ==========================================
-  
-  // Mermaid 在线 UMD 地址 (使用 jsdelivr CDN)
-  const MERMAID_CDN_URL = 'https://cdn.jsdelivr.net/npm/mermaid@10.6.1/dist/mermaid.min.js';
-  
+
+  // 库的地址配置
+  const LIBS = {
+    mermaid: {
+      local: chrome.runtime.getURL('libs/mermaid.min.js'),
+      cdn: 'https://cdn.jsdelivr.net/npm/mermaid@10.6.1/dist/mermaid.min.js',
+      globalVar: 'mermaid'
+    },
+    katexCss: {
+      local: chrome.runtime.getURL('libs/katex.min.css'),
+      cdn: 'https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css',
+      isCss: true
+    },
+    katexJs: {
+      local: chrome.runtime.getURL('libs/katex.min.js'),
+      cdn: 'https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js',
+      globalVar: 'katex'
+    },
+    katexAutoRender: {
+      local: chrome.runtime.getURL('libs/auto-render.min.js'),
+      cdn: 'https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/contrib/auto-render.min.js',
+      globalVar: 'renderMathInElement'
+    }
+  };
+
   let mermaidLoaded = false;
   let mermaidInstance = null;
+  let katexLoaded = false;// 用于标记 KaTeX 是否已加载
 
   // 功能配置开关：默认为 true，方便后续通过配置文件或 UI 控制
   const CONFIG = {
     enableTOC: true,      // 是否启用左侧目录导航
     enableMermaid: true,  // 是否启用 Mermaid 图表渲染
-    enableEditor: true    // 是否启用实时编辑功能
+    enableEditor: true,    // 是否启用实时编辑功能
+    enableMath: true // 新增：数学公式开关
   };
 
   let originalContent = ''; // 用于存储文件打开时的原始内容，支持“重置”功能
 
+  // 【新增】全局映射表：存储 { "原始文本": "heading-x" }
+  let headingIdMap = {};
+
+   /**
+   * 【公共函数】通用外部库加载器 (Fetch + Blob 模式，兼容 CSP)
+   * @param {string} url - 脚本或样式表的 URL (优先使用本地 chrome.runtime.getURL)
+   * @param {boolean} isCss - 是否为 CSS 文件
+   * @returns {Promise<void>}
+   */
+  async function loadExternalLib(url, isCss = false) {
+    return new Promise(async (resolve, reject) => {
+      try {
+        // 1. 尝试 Fetch 获取内容 (绕过 CSP 对 script-src 的限制)
+        const response = await fetch(url);
+        if (!response.ok) throw new Error(`Fetch failed: ${response.status}`);
+        
+        const content = await response.text();
+
+        if (isCss) {
+          // 2a. 处理 CSS: 创建 Style 标签
+          const style = document.createElement('style');
+          style.textContent = content;
+          document.head.appendChild(style);
+          resolve();
+        } else {
+          // 2b. 处理 JS: 创建 Blob URL 并插入 Script 标签
+          const blob = new Blob([content], { type: 'application/javascript' });
+          const blobUrl = URL.createObjectURL(blob);
+          
+          const script = document.createElement('script');
+          script.src = blobUrl;
+          
+          script.onload = () => {
+            URL.revokeObjectURL(blobUrl); // 清理内存
+            resolve();
+          };
+          
+          script.onerror = (e) => {
+            URL.revokeObjectURL(blobUrl);
+            reject(new Error(`Script execution failed for ${url}`));
+          };
+          
+          document.head.appendChild(script);
+        }
+      } catch (error) {
+        console.warn(`Failed to load lib from ${url}, trying fallback if available...`, error);
+        reject(error);
+      }
+    });
+  }
 
   /**
    * 动态加载 Mermaid 库
    */
   async function loadMermaid() {
-    if (mermaidLoaded) return mermaidInstance;
+    if (mermaidLoaded && mermaidInstance) return mermaidInstance;
     
-    return new Promise((resolve, reject) => {
-      const script = document.createElement('script');
-      script.src = MERMAID_CDN_URL;
-      script.onload = () => {
-        // Mermaid UMD 版本会暴露全局 window.mermaid 对象
+    // 如果全局已存在（例如通过 manifest 预加载），直接使用
+    if (window.mermaid) {
+      console.log('Using existing mermaid instance...');
+      mermaidInstance = window.mermaid;
+      mermaidLoaded = true;
+      if (!mermaidInstance.__initialized) {
+        mermaidInstance.initialize({ startOnLoad: false, theme: 'default', securityLevel: 'loose' });
+        mermaidInstance.__initialized = true;
+      }
+      return mermaidInstance;
+    }
+
+    // 否则动态加载
+    try {
+      console.log('loadExternalLib Loading Mermaid...');
+      await loadExternalLib(LIBS.mermaid.local);
+      
+      if (window.mermaid) {
         mermaidInstance = window.mermaid;
-        if (mermaidInstance) {
-          mermaidInstance.initialize({ 
-            startOnLoad: false, // 禁止自动扫描，由我们手动触发渲染
-            theme: 'default',   // 使用默认主题
-            securityLevel: 'loose' // 允许在图表中使用 HTML 标签（可选）
-          });
-          // 初始化 Mermaid 图表库
-          mermaidLoaded = true;
-          resolve(mermaidInstance);
-        } else {
-          reject(new Error('Mermaid global object not found'));
-        }
-      };
-      script.onerror = () => reject(new Error('Failed to load Mermaid from CDN'));
-      document.head.appendChild(script);
-    });
+        mermaidLoaded = true;
+        mermaidInstance.initialize({ startOnLoad: false, theme: 'default', securityLevel: 'loose' });
+        mermaidInstance.__initialized = true;
+        return mermaidInstance;
+      } else {
+        throw new Error('Mermaid global object not found after loading');
+      }
+    } catch (e) {
+      console.error('Mermaid load error:', e);
+      throw e;
+    }
+
+  }
+
+
+
+
+
+  async function loadMermaidsss() {
+    if (mermaidLoaded && mermaidInstance) return mermaidInstance;
+    
+    // 如果全局已经存在，直接使用
+    if (window.mermaid) {
+      mermaidInstance = window.mermaid;
+      mermaidLoaded = true;
+      if (!mermaidInstance.__initialized) {
+         mermaidInstance.initialize({ startOnLoad: false, theme: 'default', securityLevel: 'loose' });
+         mermaidInstance.__initialized = true;
+      }
+      return mermaidInstance;
+    }
+
+    try {
+      // 1. 获取本地文件内容
+      const response = await fetch(MERMAID_LOCAL_PATH);
+      if (!response.ok) throw new Error(`Failed to fetch Mermaid: ${response.status}`);
+      
+      const scriptText = await response.text();
+      
+      // 2. 创建 Blob 对象
+      const blob = new Blob([scriptText], { type: 'application/javascript' });
+      const blobUrl = URL.createObjectURL(blob);
+      
+      // 3. 通过 Blob URL 加载脚本
+      await new Promise((resolve, reject) => {
+        const script = document.createElement('script');
+        script.src = blobUrl;
+        script.onload = resolve;
+        script.onerror = reject;
+        document.head.appendChild(script);
+      });
+      
+      // 4. 清理 Blob URL
+      URL.revokeObjectURL(blobUrl);
+      
+      // 5. 检查全局变量
+      if (window.mermaid) {
+        mermaidInstance = window.mermaid;
+        mermaidLoaded = true;
+        mermaidInstance.initialize({ startOnLoad: false, theme: 'default', securityLevel: 'loose' });
+        mermaidInstance.__initialized = true;
+        return mermaidInstance;
+      } else {
+        throw new Error('Mermaid global object not found after Blob load');
+      }
+    } catch (error) {
+      console.error('Mermaid load failed:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * 动态加载 KaTeX
+   */
+  async function loadKaTeX() {
+    if (katexLoaded) return;
+    if (window.katex && window.renderMathInElement) {
+      katexLoaded = true;
+      console.log('KaTeX initialized.');
+      return;
+    } else {
+      console.warn('KaTeX not found. Ensure libs/katex files are in manifest.');
+    }
+    try {
+      // 并行加载 CSS 和 JS
+      console.log('loadExternalLib Loading KaTeX...');
+      await Promise.all([
+        loadExternalLib(LIBS.katexCss.local, true),
+        loadExternalLib(LIBS.katexJs.local),
+        loadExternalLib(LIBS.katexAutoRender.local)
+      ]);
+      
+      katexLoaded = true;
+    } catch (e) {
+      console.error('KaTeX load error:', e);
+      throw e;
+    }
   }
 
   // ==========================================
@@ -137,6 +304,27 @@ import DOMPurify from 'dompurify';
         }
         
       }
+      // 2. 处理数学公式 (KaTeX)
+      if (CONFIG.enableMath) {
+        // 确保 KaTeX 已加载
+        if (!katexLoaded) {
+          await loadKaTeX();
+        }
+        
+        // 使用 KaTeX 的 auto-render 扩展自动查找 $...$ 和 $$...$$
+        if (typeof window.renderMathInElement === 'function') {
+          window.renderMathInElement(tempDiv, {
+            delimiters: [
+              { left: '$$', right: '$$', display: true },
+              { left: '$', right: '$', display: false },
+              { left: '\\(', right: '\\)', display: false },
+              { left: '\\[', right: '\\]', display: true }
+            ],
+            throwOnError: false
+          });
+        }
+        
+      }
       
       return tempDiv.innerHTML;
     } catch (error) {
@@ -153,6 +341,9 @@ import DOMPurify from 'dompurify';
   function processHeadersAndGenerateTOC(contentContainer) {
     if (!CONFIG.enableTOC) return '';
     
+    // 重置映射表
+    headingIdMap = {};
+
     // 直接查询容器内的标题
     const headers = contentContainer.querySelectorAll('h1, h2, h3');
     
@@ -164,6 +355,10 @@ import DOMPurify from 'dompurify';
       const id = `heading-${index}`;
       header.id = id; 
       
+      // 【关键】建立映射：去除首尾空格后的文本 -> 新 ID
+      const text = header.textContent.trim();
+      headingIdMap[text] = id;
+
       const level = parseInt(header.tagName.substring(1));
       const indent = (level - 1) * 15;
       
@@ -288,6 +483,11 @@ import DOMPurify from 'dompurify';
 
     console.log('MD Viewer: Markdown file detected.');
 
+    // 预加载 KaTeX (如果开启了数学公式支持)
+    if (CONFIG.enableMath) {
+      loadKaTeX().catch(err => console.error('KaTeX load failed:', err));
+    }
+    
     // 获取原始内容并保存
     const rawText = getRawText();
     originalContent = rawText; 
@@ -394,7 +594,7 @@ import DOMPurify from 'dompurify';
         }
       });
     }
-    
+
     // --- 切换 预览/源码 模式 ---
     if (toggleBtn) {
       toggleBtn.addEventListener('click', () => {
@@ -494,6 +694,67 @@ import DOMPurify from 'dompurify';
       });
     }
 
+
+    // --- 【新增】处理内容区域内的锚点跳转 (解决右侧点击目录无反应的问题) ---
+    // 使用事件委托，监听整个 previewContainer 内的点击
+    previewContainer.addEventListener('click', (e) => {
+      // 查找最近的 <a> 标签
+      const link = e.target.closest('a');
+      if (link) {
+        const hash = link.getAttribute('href');
+        // 如果链接是以 # 开头的内部锚点
+        if (hash && hash.startsWith('#')) {
+          e.preventDefault(); // 阻止默认跳转行为
+          let targetEl = null;
+          let rawTarget  = hash.substring(1); // 去掉 # 号
+          console.log('rawTarget:', decodeURIComponent(hash));
+          // 1. 优先尝试直接通过 ID 查找（适用于插件生成的目录链接 #heading-x）
+          targetEl = document.getElementById(rawTarget);
+
+          // 2. 如果没找到，尝试解码后查找（适用于 Marked 生成的中文链接 #功能特性）
+          if (!targetEl) {
+            try {
+              const decodedTarget = decodeURIComponent(rawTarget);
+              targetEl = document.getElementById(decodedTarget);
+            } catch (err) {
+              // 忽略解码错误
+            }
+          }
+          // 3. 【核心修复】如果还是没找到，尝试通过“文本内容”匹配
+          if (!targetEl) {
+            const decodedText = decodeURIComponent(rawTarget).replace(/-/g, ' '); // 有些解析器会把空格变成 -
+            
+            // 遍历所有标题，看是否有文本匹配的
+            const allHeaders = previewContainer.querySelectorAll('h1, h2, h3');
+            for (let h of allHeaders) {
+              // 比较去除空格和特殊符号后的文本
+              if (h.textContent.trim().indexOf(decodedText) !==-1  || headingIdMap[decodedText]) {
+                targetEl = h;
+                break;
+              }
+            }
+            
+            // 如果映射表里有，直接用映射表的 ID
+            if (!targetEl && headingIdMap[decodedText]) {
+               targetEl = document.getElementById(headingIdMap[decodedText]);
+            }
+          }
+          console.log('Target element:', targetEl);
+          if (targetEl) {
+            // 执行平滑滚动，并减去工具栏的高度 (约 60px)
+            const offsetTop = targetEl.getBoundingClientRect().top + window.pageYOffset - 70;
+            window.scrollTo({
+              top: offsetTop,
+              behavior: 'smooth'
+            });
+          }else{
+            console.warn(`Target element not found for ID: ${targetId}`);
+          }
+        }
+      }
+    });
+
+    
     // --- 复制功能 ---
     document.getElementById('md-copy-btn').addEventListener('click', () => {
       navigator.clipboard.writeText(window.__mdRawContent || '').then(() => {
