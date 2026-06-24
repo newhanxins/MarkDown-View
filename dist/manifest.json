@@ -7,17 +7,29 @@
     "activeTab",
     "scripting"
   ],
+  "host_permissions": [
+    "https://cdn.jsdelivr.net/*"
+  ],
   "content_scripts": [
     {
       "matches": ["<all_urls>"],
-      "js": ["content.js"],
-      "css": ["content.css"],
+      "css": ["libs/katex.min.css", "content.css"],
+      "js": [
+        "libs/mermaid.min.js", 
+        "libs/katex.min.js", 
+        "libs/auto-render.min.js", 
+        "content.js"
+      ],
       "run_at": "document_end"
     }
   ],
+  "content_security_policy": {
+    "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self';",
+    "sandbox": "sandbox allow-scripts allow-forms allow-popups allow-modals; script-src 'self' 'unsafe-inline' 'unsafe-eval'; child-src 'self';"
+  },
   "web_accessible_resources": [
     {
-      "resources": ["libs/*.js"],
+      "resources": ["libs/*.js", "libs/*.css", "*.js", "assets/*"],
       "matches": ["<all_urls>"]
     }
   ],
