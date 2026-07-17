@@ -104,7 +104,7 @@ body{
 }
 
 #md-toc-sidebar {
-  width: 250px;
+  max-width: 400px;
   background: var(--sidebar-bg);
   border-right: 1px solid var(--border-color);
   padding: 20px;
@@ -131,6 +131,19 @@ body{
 .md-toc a:hover {
   color: var(--link-color);
   text-decoration: underline;
+}
+/* 目录链接选中状态 */
+.toc-link.active {
+  color: #007bff; /* 选中时的颜色，可以根据你的主题调整 */
+  font-weight: bold;
+  border-left: 3px solid #007bff;
+  padding-left: 8px;
+  background-color: rgba(0, 123, 255, 0.1);
+}
+
+.toc-link:hover {
+  color: #0056b3;
+  text-decoration: none;
 }
 
 #md-content-area {

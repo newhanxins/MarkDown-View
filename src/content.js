@@ -12,25 +12,36 @@ import DOMPurify from 'dompurify';
   // 1. 初始化配置与全局变量
   // ==========================================
 
+  // 【新增】兼容函数：在插件环境和本地测试环境中都能获取资源路径
+  function getAssetPath(path) {
+    // 如果是 Chrome 扩展环境
+    if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.getURL) {
+      return chrome.runtime.getURL(path);
+    }
+    // 如果是本地测试环境 (Vite Dev Server)，直接返回相对路径
+    // 假设 libs 文件夹在 public 目录下，开发时 Vite 会从 public 根目录提供
+    return '/' + path;
+  }
+
   // 库的地址配置
   const LIBS = {
     mermaid: {
-      local: chrome.runtime.getURL('libs/mermaid.min.js'),
+      local: getAssetPath('libs/mermaid.min.js'),
       cdn: 'https://cdn.jsdelivr.net/npm/mermaid@10.6.1/dist/mermaid.min.js',
       globalVar: 'mermaid'
     },
     katexCss: {
-      local: chrome.runtime.getURL('libs/katex.min.css'),
+      local: getAssetPath('libs/katex.min.css'),
       cdn: 'https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css',
       isCss: true
     },
     katexJs: {
-      local: chrome.runtime.getURL('libs/katex.min.js'),
+      local: getAssetPath('libs/katex.min.js'),
       cdn: 'https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js',
       globalVar: 'katex'
     },
     katexAutoRender: {
-      local: chrome.runtime.getURL('libs/auto-render.min.js'),
+      local: getAssetPath('libs/auto-render.min.js'),
       cdn: 'https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/contrib/auto-render.min.js',
       globalVar: 'renderMathInElement'
     }
@@ -240,7 +251,14 @@ import DOMPurify from 'dompurify';
     
     // 检查 MIME 类型
     const contentType = document.contentType;
-    return contentType && (contentType.includes('text/markdown') || contentType.includes('text/x-markdown'));
+    if (contentType && (contentType.includes('text/markdown') || contentType.includes('text/x-markdown'))) return true;
+
+    // 【新增】兼容本地测试：如果 body 下有 pre 标签且没有插件 UI，也视为 md 文件
+    if (document.querySelector('body > pre') && !document.getElementById('md-viewer-toolbar')) {
+        return true;
+    }
+    
+    return false;
   }
 
   /**
@@ -344,8 +362,8 @@ import DOMPurify from 'dompurify';
     // 重置映射表
     headingIdMap = {};
 
-    // 直接查询容器内的标题
-    const headers = contentContainer.querySelectorAll('h1, h2, h3');
+    // 【修改】扩大选择范围，支持 h1 到 h6
+    const headers = contentContainer.querySelectorAll('h1, h2, h3, h4, h5, h6');
     
     if (headers.length === 0) return '';
 
@@ -360,10 +378,11 @@ import DOMPurify from 'dompurify';
       headingIdMap[text] = id;
 
       const level = parseInt(header.tagName.substring(1));
-      const indent = (level - 1) * 15;
+      // 【修改】优化缩进逻辑，每层增加 12px，最大不超过 60px 防止过宽
+      const indent = Math.min((level - 1) * 12, 60);
       
-      tocHtml += `<li style="margin-left: ${indent}px; margin-bottom: 5px;">
-        <a href="javascript:void(0)" class="toc-link" data-target="${id}">
+      tocHtml += `<li style="margin-left: ${indent}px; margin-bottom: 4px; font-size: ${14 - (level - 1)}px;">
+        <a href="javascript:void(0)" class="toc-link" data-target="${id}" title="${header.textContent}">
           ${header.textContent}
         </a>
       </li>`;
@@ -382,8 +401,8 @@ import DOMPurify from 'dompurify';
     
     const tempDiv = document.createElement('div');
     tempDiv.innerHTML = htmlContent;
-    // 提取 h1, h2, h3 标题
-    const headers = tempDiv.querySelectorAll('h1, h2, h3');
+    // 【修改】扩大选择范围
+    const headers = tempDiv.querySelectorAll('h1, h2, h3, h4, h5, h6');
     
     if (headers.length === 0) return '';
 
@@ -395,10 +414,10 @@ import DOMPurify from 'dompurify';
       
       const level = parseInt(header.tagName.substring(1));
       // 根据标题层级设置缩进
-      const indent = (level - 1) * 15;
+      const indent = Math.min((level - 1) * 12, 60);
       
-      tocHtml += `<li style="margin-left: ${indent}px; margin-bottom: 5px;">
-        <a href="#${id}" class="toc-link" data-target="${id}">
+      tocHtml += `<li style="margin-left: ${indent}px; margin-bottom: 4px; font-size: ${14 - (level - 1)}px;">
+        <a href="#${id}" class="toc-link" data-target="${id}" title="${header.textContent}">
           ${header.textContent}
         </a>
       </li>`;
@@ -492,7 +511,15 @@ import DOMPurify from 'dompurify';
     const rawText = getRawText();
     originalContent = rawText; 
     window.__mdRawContent = rawText;
-    window.__mdFileName = window.location.pathname.split('/').pop() || 'untitled.md';
+    
+    // 【修改】处理中文文件名乱码：先获取路径，再解码
+    let fileName = window.location.pathname.split('/').pop() || 'untitled.md';
+    try {
+      fileName = decodeURIComponent(fileName);
+    } catch (e) {
+      console.warn('Filename decode error', e);
+    }
+    window.__mdFileName = fileName;
 
     // 创建界面
     const { tocContainer, previewContainer, editorContainer } = createUI();
@@ -514,8 +541,14 @@ import DOMPurify from 'dompurify';
       
       // 绑定目录点击事件（使用事件委托）
       tocContainer.addEventListener('click', (e) => {
-        if (e.target.classList.contains('toc-link')) {
+        const link = e.target.closest('.toc-link');
+        if (link) {
           e.preventDefault();
+          // 【新增】处理选中状态
+          const allLinks = tocContainer.querySelectorAll('.toc-link');
+          allLinks.forEach(l => l.classList.remove('active'));
+          link.classList.add('active');
+
           const targetId = e.target.getAttribute('data-target');
           const targetEl = document.getElementById(targetId);
           if (targetEl) {
@@ -725,10 +758,9 @@ import DOMPurify from 'dompurify';
             const decodedText = decodeURIComponent(rawTarget).replace(/-/g, ' '); // 有些解析器会把空格变成 -
             
             // 遍历所有标题，看是否有文本匹配的
-            const allHeaders = previewContainer.querySelectorAll('h1, h2, h3');
+            const allHeaders = previewContainer.querySelectorAll('h1, h2, h3, h4, h5, h6');
             for (let h of allHeaders) {
-              // 比较去除空格和特殊符号后的文本
-              if (h.textContent.trim().indexOf(decodedText) !==-1  || headingIdMap[decodedText]) {
+              if (h.textContent.trim() === decodedText || headingIdMap[decodedText]) {
                 targetEl = h;
                 break;
               }
@@ -747,6 +779,22 @@ import DOMPurify from 'dompurify';
               top: offsetTop,
               behavior: 'smooth'
             });
+
+            // 【新增】同步更新左侧目录的选中状态
+            const tocSidebar = document.getElementById('md-toc-sidebar');
+            if (tocSidebar) {
+              const allLinks = tocSidebar.querySelectorAll('.toc-link');
+              allLinks.forEach(l => l.classList.remove('active'));
+              // 找到对应的目录链接并高亮
+              const targetId = targetEl.id;
+              const activeLink = tocSidebar.querySelector(`.toc-link[data-target="${targetId}"]`);
+              if (activeLink) {
+                activeLink.classList.add('active');
+                // 可选：将选中的目录项滚动到可视区域
+                activeLink.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+              }
+            }
+            
           }else{
             console.warn(`Target element not found for ID: ${targetId}`);
           }
