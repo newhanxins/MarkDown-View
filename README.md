@@ -31,6 +31,7 @@
 - 📑 **智能目录**：左侧自动生成导航栏，点击可平滑滚动定位
 - ✏️ **实时编辑**：支持在线修改 Markdown 内容，并提供重置功能
 - 📊 **Mermaid 支持**：自动渲染流程图、时序图等 Mermaid 图表（需联网）
+- 🔢 **数学公式**：支持 KaTeX 渲染行内和块级数学公式
 - 🌓 主题切换：支持亮色/暗色模式一键切换，并自动记忆用户偏好
 
 ### 支持的 Markdown 语法
@@ -62,6 +63,7 @@ md-view/
 ├── package.json              # 项目配置文件（依赖、脚本等）
 ├── vite.config.js            # Vite 构建配置
 ├── README.md                 # 项目说明文档
+├── index.html                # 开发测试页面（本地调试用）
 ├── public/                   # 静态资源目录
 │   ├── manifest.json         # Chrome 插件清单文件
 │   └── icons/                # 插件图标
@@ -104,6 +106,7 @@ md-view/
 - `marked@^11.1.0`：Markdown 解析器（本地打包）
 - `dompurify@^3.0.6`：HTML sanitization 库（本地打包）
 - `mermaid@10.x`：图表渲染库（**在线 CDN 加载**，以减小插件体积）
+- `katex@0.16.x`：数学公式渲染库（本地打包）
 
 ---
 
@@ -183,6 +186,18 @@ file:///你的路径/test.md
 ```
 
 插件会自动识别并渲染！
+
+### 6. 开发模式测试
+
+```bash
+npm run dev
+```
+
+启动后访问 `http://localhost:5173`，在页面中通过以下方式预览 Markdown：
+
+- **选择文件**：点击"选择文件"按钮，选择本地 `.md` 文件
+- **拖拽上传**：将 `.md` 文件拖拽到页面中
+- **内置示例**：点击页面下方的示例链接，快速查看渲染效果
 
 ---
 
@@ -307,7 +322,8 @@ http://localhost:8080/document.md
 const CONFIG = {
   enableTOC: true,      // 关闭则不显示左侧目录
   enableMermaid: true,  // 关闭则不渲染 Mermaid 图表
-  enableEditor: true    // 关闭则不显示编辑按钮
+  enableEditor: true,   // 关闭则不显示编辑按钮
+  enableMath: true      // 关闭则不渲染数学公式
 };
 ```
 ### 图标配置
@@ -339,8 +355,8 @@ const CONFIG = {
 #### 1. 实时开发
 
 ```bash
-# 监视文件变化并自动重新构建
-npm run build -- --watch
+# 启动开发模式（本地测试页面，支持热更新）
+npm run dev
 ```
 
 或者手动构建：
@@ -348,6 +364,9 @@ npm run build -- --watch
 ```bash
 # 每次修改后重新构建
 npm run build
+
+# 监视文件变化并自动重新构建
+npm run build -- --watch
 ```
 
 #### 2. 重新加载插件
@@ -724,5 +743,62 @@ SOFTWARE.
 ---
 
 **⭐ 如果这个项目对你有帮助，请给个 Star！**
+
+# 数学公式测试
+
+## 行内公式
+这是一个著名的质能方程：$E=mc^2$。
+
+## 块级公式
+二次方程求根公式：
+
+$$
+x = \frac{-b \pm \sqrt{b^2 - 4ac}}{2a}
+$$
+
+## 复杂公式
+麦克斯韦方程组（微分形式）：
+
+$$
+\begin{aligned}
+\nabla \cdot \mathbf{E} &= \frac{\rho}{\varepsilon_0} \\
+\nabla \cdot \mathbf{B} &= 0 \\
+\nabla \times \mathbf{E} &= -\frac{\partial \mathbf{B}}{\partial t} \\
+\nabla \times \mathbf{B} &= \mu_0\mathbf{J} + \mu_0\varepsilon_0\frac{\partial \mathbf{E}}{\partial t}
+\end{aligned}
+$$
+
+# Mermaid 测试
+## 流程图
+```mermaid
+graph TD
+A[开始] --> B{判断条件}
+B -->|条件1| C[处理条件1]
+B -->|条件2| D[处理条件2]
+C --> E[结束]
+D --> E
 ```
 
+## 时序图
+```mermaid
+sequenceDiagram
+Alice->>John: Hello John, how are you?
+loop Healthcheck
+    John->>John: Fight against hypochondria
+end
+Note right of John: Rational thoughts prevail!
+John-->>Alice: Great!
+John->>Bob: How about you?
+Bob-->>John: Jolly good!
+```
+
+## 甘特图
+```mermaid
+gantt
+    title Adding GANTT diagram functionality to mermaid
+    section A section
+    Completed task            :done,    des1, 2014-01-06,2014-01-08
+    Active task               :active,  des2, 2014-01-09, 3d
+    Future task               :         des3, after des2, 5d
+    Future task2               :         des4, after des3, 5d
+```

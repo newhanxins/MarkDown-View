@@ -221,13 +221,11 @@ import DOMPurify from 'dompurify';
       console.warn('KaTeX not found. Ensure libs/katex files are in manifest.');
     }
     try {
-      // 并行加载 CSS 和 JS
+      // 按顺序加载：先 CSS，再 katex.js，最后 auto-render.js
       console.log('loadExternalLib Loading KaTeX...');
-      await Promise.all([
-        loadExternalLib(LIBS.katexCss.local, true),
-        loadExternalLib(LIBS.katexJs.local),
-        loadExternalLib(LIBS.katexAutoRender.local)
-      ]);
+      await loadExternalLib(LIBS.katexCss.local, true);
+      await loadExternalLib(LIBS.katexJs.local);
+      await loadExternalLib(LIBS.katexAutoRender.local);
       
       katexLoaded = true;
     } catch (e) {
@@ -253,11 +251,18 @@ import DOMPurify from 'dompurify';
     const contentType = document.contentType;
     if (contentType && (contentType.includes('text/markdown') || contentType.includes('text/x-markdown'))) return true;
 
-    // 【新增】兼容本地测试：如果 body 下有 pre 标签且没有插件 UI，也视为 md 文件
-    if (document.querySelector('body > pre') && !document.getElementById('md-viewer-toolbar')) {
+    // 【新增】兼容本地测试：如果 body 下有非空的 pre 标签（排除 raw-md）且没有插件 UI，也视为 md 文件
+    const bodyPre = document.querySelector('body > pre');
+    if (bodyPre && bodyPre.id !== 'raw-md' && bodyPre.textContent.trim().length > 0 && !document.getElementById('md-viewer-toolbar')) {
         return true;
     }
-    
+
+    // 【新增】兼容开发模式：如果存在 raw-md 元素且有内容
+    const rawMd = document.getElementById('raw-md');
+    if (rawMd && rawMd.textContent.trim().length > 0) {
+        return true;
+    }
+
     return false;
   }
 
@@ -267,12 +272,16 @@ import DOMPurify from 'dompurify';
    * @returns {string}
    */
   function getRawText() {
+    // 开发模式下优先使用 raw-md 元素
+    const rawMd = document.getElementById('raw-md');
+    if (rawMd) return rawMd.textContent;
+
     const preElement = document.querySelector('pre');
     if (preElement) return preElement.textContent;
-    
+
     const codeElement = document.querySelector('code');
     if (codeElement) return codeElement.textContent;
-    
+
     return document.body.innerText;
   }
 
@@ -500,6 +509,12 @@ import DOMPurify from 'dompurify';
   async function renderMarkdown() {
     if (!isMarkdownFile()) return;
 
+    // 清除已有 UI，防止重复创建（开发模式下多次加载时有用）
+    const existingToolbar = document.getElementById('md-viewer-toolbar');
+    const existingMain = document.getElementById('md-main-container');
+    if (existingToolbar) existingToolbar.remove();
+    if (existingMain) existingMain.remove();
+
     console.log('MD Viewer: Markdown file detected.');
 
     // 预加载 KaTeX (如果开启了数学公式支持)
@@ -509,6 +524,13 @@ import DOMPurify from 'dompurify';
     
     // 获取原始内容并保存
     const rawText = getRawText();
+
+    // 开发模式下：内容为空时不渲染，等待用户上传文件
+    if (!rawText || rawText.trim().length === 0) {
+      console.log('MD Viewer: raw content is empty, skipping render.');
+      return;
+    }
+
     originalContent = rawText; 
     window.__mdRawContent = rawText;
     
@@ -804,26 +826,32 @@ import DOMPurify from 'dompurify';
 
     
     // --- 复制功能 ---
-    document.getElementById('md-copy-btn').addEventListener('click', () => {
-      navigator.clipboard.writeText(window.__mdRawContent || '').then(() => {
-        alert('✅ Markdown 源码已复制到剪贴板');
-      }).catch(err => {
-        console.error('Copy failed:', err);
+    const copyBtn = document.getElementById('md-copy-btn');
+    if (copyBtn) {
+      copyBtn.addEventListener('click', () => {
+        navigator.clipboard.writeText(window.__mdRawContent || '').then(() => {
+          alert('✅ Markdown 源码已复制到剪贴板');
+        }).catch(err => {
+          console.error('Copy failed:', err);
+        });
       });
-    });
+    }
 
     // --- 下载功能 ---
-    document.getElementById('md-download-btn').addEventListener('click', () => {
-      const blob = new Blob([window.__mdRawContent || ''], { type: 'text/markdown' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = window.__mdFileName;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(url);
-    });
+    const downloadBtn = document.getElementById('md-download-btn');
+    if (downloadBtn) {
+      downloadBtn.addEventListener('click', () => {
+        const blob = new Blob([window.__mdRawContent || ''], { type: 'text/markdown' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = window.__mdFileName || 'document.md';
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+      });
+    }
   }
 
   // ==========================================
@@ -834,4 +862,7 @@ import DOMPurify from 'dompurify';
   } else {
     renderMarkdown();
   }
+
+  // 暴露到 window，供开发模式重新触发
+  window.__mdRenderMarkdown = renderMarkdown;
 })();
