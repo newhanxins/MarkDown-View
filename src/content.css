@@ -94,6 +94,7 @@ body{
 #md-main-container {
   margin-top: 70px;
   display: flex;
+  width: 100%;
   max-width: 1400px;
   margin-left: auto;
   margin-right: auto;
@@ -296,6 +297,95 @@ body{
   margin: 20px 0;
   padding: 10px;
   background: var(--bg-color);
+}
+
+/* Loading spinner */
+#md-loading-overlay {
+  position: fixed;
+  top: 70px;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: var(--bg-color);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  z-index: 9999;
+  transition: opacity 0.3s ease;
+}
+
+#md-loading-overlay.hidden {
+  display: none;
+}
+
+.md-spinner {
+  width: 50px;
+  height: 50px;
+  border: 4px solid var(--border-color);
+  border-top-color: var(--toolbar-bg-start);
+  border-radius: 50%;
+  animation: md-spinner-spin 1s linear infinite;
+}
+
+.md-loading-text {
+  margin-top: 16px;
+  font-size: 14px;
+  color: var(--text-color);
+  opacity: 0.8;
+}
+
+@keyframes md-spinner-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* 代码块复制按钮 */
+.md-code-block {
+  position: relative;
+}
+
+.md-code-block .md-copy-code-btn,
+.md-code-block .md-copy-md-btn {
+  position: absolute;
+  top: 8px;
+  padding: 4px 12px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-color);
+  background: var(--bg-color);
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.2s ease, background 0.2s ease;
+  z-index: 10;
+}
+
+.md-code-block .md-copy-code-btn {
+  right: 8px;
+}
+
+.md-code-block .md-copy-md-btn {
+  right: 68px;
+}
+
+.md-code-block:hover .md-copy-code-btn,
+.md-code-block:hover .md-copy-md-btn {
+  opacity: 1;
+}
+
+.md-code-block .md-copy-code-btn:hover,
+.md-code-block .md-copy-md-btn:hover {
+  background: var(--code-bg);
+  border-color: var(--link-color);
+}
+
+.md-code-block .md-copy-code-btn.copied,
+.md-code-block .md-copy-md-btn.copied {
+  color: #28a745;
+  border-color: #28a745;
 }
 
 /* 响应式调整 */

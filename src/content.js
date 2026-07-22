@@ -215,19 +215,29 @@ import DOMPurify from 'dompurify';
     if (katexLoaded) return;
     if (window.katex && window.renderMathInElement) {
       katexLoaded = true;
-      console.log('KaTeX initialized.');
+      console.log('KaTeX already initialized.');
       return;
-    } else {
-      console.warn('KaTeX not found. Ensure libs/katex files are in manifest.');
     }
     try {
       // 按顺序加载：先 CSS，再 katex.js，最后 auto-render.js
-      console.log('loadExternalLib Loading KaTeX...');
+      console.log('Loading KaTeX...');
       await loadExternalLib(LIBS.katexCss.local, true);
       await loadExternalLib(LIBS.katexJs.local);
+      
+      // 验证 katex 是否完全加载，包括 ParseError
+      if (!window.katex || typeof window.katex.ParseError === 'undefined') {
+        throw new Error('KaTeX loaded but ParseError is undefined');
+      }
+      
       await loadExternalLib(LIBS.katexAutoRender.local);
       
+      // 验证 auto-render 是否加载成功
+      if (typeof window.renderMathInElement !== 'function') {
+        throw new Error('auto-render.min.js loaded but renderMathInElement is not available');
+      }
+      
       katexLoaded = true;
+      console.log('KaTeX initialized successfully.');
     } catch (e) {
       console.error('KaTeX load error:', e);
       throw e;
@@ -480,6 +490,14 @@ import DOMPurify from 'dompurify';
     const contentArea = document.createElement('div');
     contentArea.id = 'md-content-area';
 
+    // 加载动画容器
+    const loadingOverlay = document.createElement('div');
+    loadingOverlay.id = 'md-loading-overlay';
+    loadingOverlay.innerHTML = `
+      <div class="md-spinner"></div>
+      <div class="md-loading-text">正在渲染 Markdown...</div>
+    `;
+
     // 预览视图容器
     const previewContainer = document.createElement('div');
     previewContainer.id = 'md-preview-container';
@@ -490,6 +508,7 @@ import DOMPurify from 'dompurify';
     editorContainer.placeholder = "在此输入 Markdown 内容...";
     editorContainer.style.display = 'none'; // 默认隐藏
 
+    contentArea.appendChild(loadingOverlay);
     contentArea.appendChild(previewContainer);
     contentArea.appendChild(editorContainer);
     
@@ -500,7 +519,7 @@ import DOMPurify from 'dompurify';
     document.body.insertBefore(toolbar, document.body.firstChild);
     document.body.insertBefore(mainContainer, document.body.firstChild.nextSibling);
 
-    return { toolbar, tocContainer, previewContainer, editorContainer };
+    return { toolbar, tocContainer, previewContainer, editorContainer, loadingOverlay };
   }
 
   /**
@@ -544,15 +563,21 @@ import DOMPurify from 'dompurify';
     window.__mdFileName = fileName;
 
     // 创建界面
-    const { tocContainer, previewContainer, editorContainer } = createUI();
+    const { tocContainer, previewContainer, editorContainer, loadingOverlay } = createUI();
     
     // 设置文件名显示
     document.getElementById('md-file-name').textContent = window.__mdFileName;
     editorContainer.value = rawText;
 
     // 执行首次渲染
-    const html = await parseMarkdown(rawText);
-    previewContainer.innerHTML = html;
+    try {
+      const html = await parseMarkdown(rawText);
+      previewContainer.innerHTML = html;
+      addCodeCopyButtons(previewContainer);
+    } finally {
+      // 渲染完成后隐藏 loading（无论成功或失败）
+      if (loadingOverlay) loadingOverlay.classList.add('hidden');
+    }
     
     // 生成目录
     if (CONFIG.enableTOC) {
@@ -610,6 +635,37 @@ import DOMPurify from 'dompurify';
       if (node.nodeType === Node.TEXT_NODE && node.textContent.trim()) {
         node.textContent = '';
       }
+    });
+  }
+
+  /**
+   * 为代码块添加复制按钮
+   */
+  function addCodeCopyButtons(previewContainer) {
+    const codeBlocks = previewContainer.querySelectorAll('pre');
+    codeBlocks.forEach(pre => {
+      // 避免重复添加
+      if (pre.parentElement && pre.parentElement.classList.contains('md-code-block')) {
+        return;
+      }
+      const wrapper = document.createElement('div');
+      wrapper.className = 'md-code-block';
+      pre.parentNode.insertBefore(wrapper, pre);
+      wrapper.appendChild(pre);
+
+      // 复制 MD 格式按钮
+      const mdBtn = document.createElement('button');
+      mdBtn.className = 'md-copy-md-btn';
+      mdBtn.textContent = '复制 MD';
+      mdBtn.type = 'button';
+      wrapper.appendChild(mdBtn);
+
+      // 复制纯代码按钮
+      const btn = document.createElement('button');
+      btn.className = 'md-copy-code-btn';
+      btn.textContent = '复制';
+      btn.type = 'button';
+      wrapper.appendChild(btn);
     });
   }
 
@@ -689,6 +745,7 @@ import DOMPurify from 'dompurify';
           window.__mdRawContent = editorContainer.value;
           parseMarkdown(editorContainer.value).then(html => {
             previewContainer.innerHTML = html;
+            addCodeCopyButtons(previewContainer);
             // if (tocSidebar) tocSidebar.innerHTML = generateTOC(html);
             if (CONFIG.enableTOC && tocSidebar) {
               tocSidebar.innerHTML = processHeadersAndGenerateTOC(previewContainer);
@@ -720,6 +777,7 @@ import DOMPurify from 'dompurify';
           window.__mdRenderTimer = setTimeout(() => {
             parseMarkdown(editorContainer.value).then(html => {
               previewContainer.innerHTML = html;
+              addCodeCopyButtons(previewContainer);
               // if (tocSidebar) tocSidebar.innerHTML = generateTOC(html);
               // 实时更新目录
               if (CONFIG.enableTOC && tocSidebar) {
@@ -740,6 +798,7 @@ import DOMPurify from 'dompurify';
           // 立即触发一次渲染更新
           parseMarkdown(originalContent).then(html => {
             previewContainer.innerHTML = html;
+            addCodeCopyButtons(previewContainer);
             // if (tocSidebar) tocSidebar.innerHTML = generateTOC(html);
             if (CONFIG.enableTOC && tocSidebar) {
               tocSidebar.innerHTML = processHeadersAndGenerateTOC(previewContainer);
@@ -836,6 +895,55 @@ import DOMPurify from 'dompurify';
         });
       });
     }
+
+    // --- 代码块复制功能 ---
+    previewContainer.addEventListener('click', (e) => {
+      const copyCodeBtn = e.target.closest('.md-copy-code-btn');
+      if (copyCodeBtn) {
+        e.preventDefault();
+        const codeBlock = copyCodeBtn.parentElement.querySelector('pre code');
+        const codeText = codeBlock ? codeBlock.textContent : '';
+        navigator.clipboard.writeText(codeText).then(() => {
+          const originalText = copyCodeBtn.textContent;
+          copyCodeBtn.textContent = '已复制';
+          copyCodeBtn.classList.add('copied');
+          setTimeout(() => {
+            copyCodeBtn.textContent = originalText;
+            copyCodeBtn.classList.remove('copied');
+          }, 2000);
+        }).catch(err => {
+          console.error('Code copy failed:', err);
+        });
+      }
+
+      // --- 代码块复制 MD 格式功能 ---
+      const copyMdBtn = e.target.closest('.md-copy-md-btn');
+      if (copyMdBtn) {
+        e.preventDefault();
+        const codeBlock = copyMdBtn.parentElement.querySelector('pre code');
+        const codeText = codeBlock ? codeBlock.textContent : '';
+        // 提取语言标识，例如 "language-javascript" -> "javascript"
+        let lang = '';
+        if (codeBlock) {
+          const langMatch = codeBlock.className.match(/language-(\w+)/);
+          if (langMatch) {
+            lang = langMatch[1];
+          }
+        }
+        const mdText = '\`\`\`' + lang + '\n' + codeText + '\n\`\`\`';
+        navigator.clipboard.writeText(mdText).then(() => {
+          const originalText = copyMdBtn.textContent;
+          copyMdBtn.textContent = '已复制';
+          copyMdBtn.classList.add('copied');
+          setTimeout(() => {
+            copyMdBtn.textContent = originalText;
+            copyMdBtn.classList.remove('copied');
+          }, 2000);
+        }).catch(err => {
+          console.error('MD copy failed:', err);
+        });
+      }
+    });
 
     // --- 下载功能 ---
     const downloadBtn = document.getElementById('md-download-btn');
