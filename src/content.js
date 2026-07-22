@@ -574,6 +574,7 @@ import DOMPurify from 'dompurify';
       const html = await parseMarkdown(rawText);
       previewContainer.innerHTML = html;
       addCodeCopyButtons(previewContainer);
+      addTableActions(previewContainer);
     } finally {
       // 渲染完成后隐藏 loading（无论成功或失败）
       if (loadingOverlay) loadingOverlay.classList.add('hidden');
@@ -639,7 +640,7 @@ import DOMPurify from 'dompurify';
   }
 
   /**
-   * 为代码块添加复制按钮
+   * 为代码块添加顶部工具栏（语言标签 + 操作按钮）和源码/渲染切换功能
    */
   function addCodeCopyButtons(previewContainer) {
     const codeBlocks = previewContainer.querySelectorAll('pre');
@@ -653,20 +654,190 @@ import DOMPurify from 'dompurify';
       pre.parentNode.insertBefore(wrapper, pre);
       wrapper.appendChild(pre);
 
+      // 获取代码块的语言标识
+      const codeEl = pre.querySelector('code');
+      let lang = '';
+      if (codeEl) {
+        const langMatch = codeEl.className.match(/language-(\w+)/);
+        if (langMatch) {
+          lang = langMatch[1];
+        }
+      }
+
+      // 创建原始 Markdown 文本（包含 ``` 包裹）
+      const rawCodeText = codeEl ? codeEl.textContent : '';
+      const mdSource = '\`\`\`' + lang + '\n' + rawCodeText + '\n\`\`\`';
+      wrapper.setAttribute('data-md-source', mdSource);
+
+      // 顶部工具栏
+      const header = document.createElement('div');
+      header.className = 'md-code-header';
+
+      // 语言标签（左侧）
+      const langLabel = document.createElement('span');
+      langLabel.className = 'md-code-lang';
+      langLabel.textContent = lang || 'code';
+      header.appendChild(langLabel);
+
+      // 操作按钮容器（右侧）
+      const actions = document.createElement('div');
+      actions.className = 'md-code-actions';
+
+      // 源码/渲染切换按钮
+      const toggleBtn = document.createElement('button');
+      toggleBtn.className = 'md-code-toggle';
+      toggleBtn.textContent = '源码';
+      toggleBtn.type = 'button';
+      actions.appendChild(toggleBtn);
+
       // 复制 MD 格式按钮
       const mdBtn = document.createElement('button');
       mdBtn.className = 'md-copy-md-btn';
       mdBtn.textContent = '复制 MD';
       mdBtn.type = 'button';
-      wrapper.appendChild(mdBtn);
+      actions.appendChild(mdBtn);
 
       // 复制纯代码按钮
       const btn = document.createElement('button');
       btn.className = 'md-copy-code-btn';
       btn.textContent = '复制';
       btn.type = 'button';
-      wrapper.appendChild(btn);
+      actions.appendChild(btn);
+
+      header.appendChild(actions);
+      wrapper.insertBefore(header, pre);
+
+      // 源码显示区域（默认隐藏）
+      const sourceArea = document.createElement('textarea');
+      sourceArea.className = 'md-code-source';
+      sourceArea.value = mdSource;
+      sourceArea.readOnly = true;
+      wrapper.appendChild(sourceArea);
     });
+  }
+
+  /**
+   * 从 Markdown 文本中提取所有表格源码
+   */
+  function extractMarkdownTables(mdText) {
+    if (!mdText) return [];
+    const lines = mdText.split('\n');
+    const tables = [];
+    let currentTable = [];
+
+    for (const line of lines) {
+      if (line.trim().startsWith('|')) {
+        currentTable.push(line);
+      } else {
+        if (currentTable.length >= 2) {
+          tables.push(currentTable.join('\n'));
+        }
+        currentTable = [];
+      }
+    }
+
+    if (currentTable.length >= 2) {
+      tables.push(currentTable.join('\n'));
+    }
+
+    return tables;
+  }
+
+  /**
+   * 为表格添加顶部工具栏（类型标签 + 操作按钮）
+   */
+  function addTableActions(previewContainer) {
+    const tables = previewContainer.querySelectorAll('table');
+    const tableSources = extractMarkdownTables(window.__mdRawContent || '');
+
+    tables.forEach((table, index) => {
+      // 避免重复添加
+      if (table.parentElement && table.parentElement.classList.contains('md-table-block')) {
+        return;
+      }
+      const wrapper = document.createElement('div');
+      wrapper.className = 'md-table-block';
+      table.parentNode.insertBefore(wrapper, table);
+      wrapper.appendChild(table);
+
+      // 获取原始 Markdown 表格源码
+      const mdSource = tableSources[index] || '';
+      wrapper.setAttribute('data-md-source', mdSource);
+
+      // 顶部工具栏
+      const header = document.createElement('div');
+      header.className = 'md-table-header';
+
+      // 类型标签（左侧）
+      const typeLabel = document.createElement('span');
+      typeLabel.className = 'md-table-type';
+      typeLabel.textContent = 'Table';
+      header.appendChild(typeLabel);
+
+      // 操作按钮容器（右侧）
+      const actions = document.createElement('div');
+      actions.className = 'md-table-actions';
+
+      // 源码/渲染切换按钮
+      const toggleBtn = document.createElement('button');
+      toggleBtn.className = 'md-table-toggle';
+      toggleBtn.textContent = '源码';
+      toggleBtn.type = 'button';
+      actions.appendChild(toggleBtn);
+
+      // 复制按钮
+      const copyBtn = document.createElement('button');
+      copyBtn.className = 'md-copy-table-btn';
+      copyBtn.textContent = '复制';
+      copyBtn.type = 'button';
+      actions.appendChild(copyBtn);
+
+      // 下载 CSV 按钮
+      const downloadBtn = document.createElement('button');
+      downloadBtn.className = 'md-download-csv-btn';
+      downloadBtn.textContent = '下载 CSV';
+      downloadBtn.type = 'button';
+      actions.appendChild(downloadBtn);
+
+      // 下载 Excel 按钮
+      const downloadExcelBtn = document.createElement('button');
+      downloadExcelBtn.className = 'md-download-excel-btn';
+      downloadExcelBtn.textContent = '下载 Excel';
+      downloadExcelBtn.type = 'button';
+      actions.appendChild(downloadExcelBtn);
+
+      header.appendChild(actions);
+      wrapper.insertBefore(header, table);
+
+      // 源码显示区域（默认隐藏）
+      const sourceArea = document.createElement('textarea');
+      sourceArea.className = 'md-table-source';
+      sourceArea.value = mdSource;
+      sourceArea.readOnly = true;
+      wrapper.appendChild(sourceArea);
+    });
+  }
+
+  /**
+   * 将 HTML 表格数据转换为 CSV 字符串
+   */
+  function tableToCSV(table) {
+    const rows = table.querySelectorAll('tr');
+    const csvLines = [];
+    rows.forEach(row => {
+      const cells = row.querySelectorAll('th, td');
+      const rowData = [];
+      cells.forEach(cell => {
+        let text = cell.textContent.trim();
+        // 处理包含逗号、引号或换行的单元格
+        if (text.includes(',') || text.includes('"') || text.includes('\n')) {
+          text = '"' + text.replace(/"/g, '""') + '"';
+        }
+        rowData.push(text);
+      });
+      csvLines.push(rowData.join(','));
+    });
+    return csvLines.join('\n');
   }
 
   // ==========================================
@@ -746,12 +917,13 @@ import DOMPurify from 'dompurify';
           parseMarkdown(editorContainer.value).then(html => {
             previewContainer.innerHTML = html;
             addCodeCopyButtons(previewContainer);
+            addTableActions(previewContainer);
             // if (tocSidebar) tocSidebar.innerHTML = generateTOC(html);
             if (CONFIG.enableTOC && tocSidebar) {
               tocSidebar.innerHTML = processHeadersAndGenerateTOC(previewContainer);
             }
           });
-          
+
           isPreviewMode = true;
           previewContainer.style.display = 'block';
           editorContainer.style.display = 'none';
@@ -778,6 +950,7 @@ import DOMPurify from 'dompurify';
             parseMarkdown(editorContainer.value).then(html => {
               previewContainer.innerHTML = html;
               addCodeCopyButtons(previewContainer);
+              addTableActions(previewContainer);
               // if (tocSidebar) tocSidebar.innerHTML = generateTOC(html);
               // 实时更新目录
               if (CONFIG.enableTOC && tocSidebar) {
@@ -799,6 +972,7 @@ import DOMPurify from 'dompurify';
           parseMarkdown(originalContent).then(html => {
             previewContainer.innerHTML = html;
             addCodeCopyButtons(previewContainer);
+            addTableActions(previewContainer);
             // if (tocSidebar) tocSidebar.innerHTML = generateTOC(html);
             if (CONFIG.enableTOC && tocSidebar) {
               tocSidebar.innerHTML = processHeadersAndGenerateTOC(previewContainer);
@@ -901,7 +1075,8 @@ import DOMPurify from 'dompurify';
       const copyCodeBtn = e.target.closest('.md-copy-code-btn');
       if (copyCodeBtn) {
         e.preventDefault();
-        const codeBlock = copyCodeBtn.parentElement.querySelector('pre code');
+        const wrapper = copyCodeBtn.closest('.md-code-block');
+        const codeBlock = wrapper ? wrapper.querySelector('pre code') : null;
         const codeText = codeBlock ? codeBlock.textContent : '';
         navigator.clipboard.writeText(codeText).then(() => {
           const originalText = copyCodeBtn.textContent;
@@ -920,7 +1095,8 @@ import DOMPurify from 'dompurify';
       const copyMdBtn = e.target.closest('.md-copy-md-btn');
       if (copyMdBtn) {
         e.preventDefault();
-        const codeBlock = copyMdBtn.parentElement.querySelector('pre code');
+        const wrapper = copyMdBtn.closest('.md-code-block');
+        const codeBlock = wrapper ? wrapper.querySelector('pre code') : null;
         const codeText = codeBlock ? codeBlock.textContent : '';
         // 提取语言标识，例如 "language-javascript" -> "javascript"
         let lang = '';
@@ -942,6 +1118,121 @@ import DOMPurify from 'dompurify';
         }).catch(err => {
           console.error('MD copy failed:', err);
         });
+      }
+
+      // --- 代码块源码/渲染切换功能 ---
+      const toggleBtn = e.target.closest('.md-code-toggle');
+      if (toggleBtn) {
+        e.preventDefault();
+        const wrapper = toggleBtn.closest('.md-code-block');
+        if (!wrapper) return;
+        const pre = wrapper.querySelector('pre');
+        const sourceArea = wrapper.querySelector('.md-code-source');
+        if (pre && sourceArea) {
+          if (pre.style.display === 'none') {
+            // 当前是源码模式，切换到渲染模式
+            pre.style.display = 'block';
+            sourceArea.style.display = 'none';
+            toggleBtn.textContent = '源码';
+          } else {
+            // 当前是渲染模式，切换到源码模式
+            pre.style.display = 'none';
+            sourceArea.style.display = 'block';
+            toggleBtn.textContent = '渲染';
+          }
+        }
+      }
+    });
+
+    // --- 表格下载 CSV 功能 ---
+    previewContainer.addEventListener('click', (e) => {
+      const downloadCsvBtn = e.target.closest('.md-download-csv-btn');
+      if (downloadCsvBtn) {
+        e.preventDefault();
+        const wrapper = downloadCsvBtn.closest('.md-table-block');
+        const table = wrapper ? wrapper.querySelector('table') : null;
+        if (table) {
+          const csvText = tableToCSV(table);
+          const blob = new Blob([csvText], { type: 'text/csv;charset=utf-8;' });
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement('a');
+          a.href = url;
+          a.download = 'table.csv';
+          document.body.appendChild(a);
+          a.click();
+          document.body.removeChild(a);
+          URL.revokeObjectURL(url);
+        }
+      }
+    });
+
+    // --- 表格下载 Excel 功能 ---
+    previewContainer.addEventListener('click', (e) => {
+      const downloadExcelBtn = e.target.closest('.md-download-excel-btn');
+      if (downloadExcelBtn) {
+        e.preventDefault();
+        const wrapper = downloadExcelBtn.closest('.md-table-block');
+        const table = wrapper ? wrapper.querySelector('table') : null;
+        if (table) {
+          const excelText = tableToExcelXML(table);
+          const blob = new Blob([excelText], { type: 'application/vnd.ms-excel' });
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement('a');
+          a.href = url;
+          a.download = 'table.xls';
+          document.body.appendChild(a);
+          a.click();
+          document.body.removeChild(a);
+          URL.revokeObjectURL(url);
+        }
+      }
+    });
+
+    // --- 表格源码/渲染切换功能 ---
+    previewContainer.addEventListener('click', (e) => {
+      const tableToggleBtn = e.target.closest('.md-table-toggle');
+      if (tableToggleBtn) {
+        e.preventDefault();
+        const wrapper = tableToggleBtn.closest('.md-table-block');
+        if (!wrapper) return;
+        const table = wrapper.querySelector('table');
+        const sourceArea = wrapper.querySelector('.md-table-source');
+        if (table && sourceArea) {
+          if (table.style.display === 'none') {
+            // 当前是源码模式，切换到渲染模式
+            table.style.display = '';
+            sourceArea.style.display = 'none';
+            tableToggleBtn.textContent = '源码';
+          } else {
+            // 当前是渲染模式，切换到源码模式
+            table.style.display = 'none';
+            sourceArea.style.display = 'block';
+            tableToggleBtn.textContent = '渲染';
+          }
+        }
+      }
+    });
+
+    // --- 表格复制功能 ---
+    previewContainer.addEventListener('click', (e) => {
+      const copyTableBtn = e.target.closest('.md-copy-table-btn');
+      if (copyTableBtn) {
+        e.preventDefault();
+        const wrapper = copyTableBtn.closest('.md-table-block');
+        const mdSource = wrapper ? wrapper.getAttribute('data-md-source') : '';
+        if (mdSource) {
+          navigator.clipboard.writeText(mdSource).then(() => {
+            const originalText = copyTableBtn.textContent;
+            copyTableBtn.textContent = '已复制';
+            copyTableBtn.classList.add('copied');
+            setTimeout(() => {
+              copyTableBtn.textContent = originalText;
+              copyTableBtn.classList.remove('copied');
+            }, 2000);
+          }).catch(err => {
+            console.error('Table copy failed:', err);
+          });
+        }
       }
     });
 
