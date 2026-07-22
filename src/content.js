@@ -327,11 +327,86 @@ import DOMPurify from 'dompurify';
               // 调用 Mermaid API 渲染 SVG
               const { svg } = await mermaidInstance.render(id, graphDefinition);
               const pre = block.parentElement;
-              const div = document.createElement('div');
-              div.className = 'mermaid-diagram'; // 添加类名方便样式控制
-              div.innerHTML = svg;
-              // 替换原有的代码块为渲染后的 SVG
-              pre.replaceWith(div);
+              
+              // 创建包装容器
+              const wrapper = document.createElement('div');
+              wrapper.className = 'md-mermaid-block';
+              
+              // 创建顶部工具栏
+              const header = document.createElement('div');
+              header.className = 'md-mermaid-header';
+              
+              // 类型标签（左侧）
+              const typeLabel = document.createElement('span');
+              typeLabel.className = 'md-mermaid-type';
+              typeLabel.textContent = 'Mermaid';
+              header.appendChild(typeLabel);
+              
+              // 操作按钮容器（右侧）
+              const actions = document.createElement('div');
+              actions.className = 'md-mermaid-actions';
+              
+              // 源码/渲染切换按钮
+              const toggleBtn = document.createElement('button');
+              toggleBtn.className = 'md-mermaid-toggle';
+              toggleBtn.textContent = '源码';
+              toggleBtn.type = 'button';
+              actions.appendChild(toggleBtn);
+              
+              // 复制 MD 按钮
+              const copyBtn = document.createElement('button');
+              copyBtn.className = 'md-copy-mermaid-btn';
+              copyBtn.textContent = '复制 MD';
+              copyBtn.type = 'button';
+              actions.appendChild(copyBtn);
+              
+              // 下载下拉菜单容器
+              const downloadContainer = document.createElement('div');
+              downloadContainer.className = 'md-mermaid-download';
+              
+              const downloadTrigger = document.createElement('button');
+              downloadTrigger.className = 'md-mermaid-download-trigger';
+              downloadTrigger.textContent = '下载 ▼';
+              downloadTrigger.type = 'button';
+              downloadContainer.appendChild(downloadTrigger);
+              
+              const downloadMenu = document.createElement('div');
+              downloadMenu.className = 'md-mermaid-download-menu';
+              
+              const downloadPng = document.createElement('div');
+              downloadPng.className = 'md-mermaid-download-item';
+              downloadPng.textContent = 'PNG';
+              downloadPng.setAttribute('data-format', 'png');
+              downloadMenu.appendChild(downloadPng);
+              
+              const downloadSvg = document.createElement('div');
+              downloadSvg.className = 'md-mermaid-download-item';
+              downloadSvg.textContent = 'SVG';
+              downloadSvg.setAttribute('data-format', 'svg');
+              downloadMenu.appendChild(downloadSvg);
+              
+              downloadContainer.appendChild(downloadMenu);
+              actions.appendChild(downloadContainer);
+              
+              header.appendChild(actions);
+              
+              // 源码显示区域（默认隐藏）
+              const sourceArea = document.createElement('textarea');
+              sourceArea.className = 'md-mermaid-source';
+              sourceArea.textContent = '```mermaid\n' + graphDefinition + '\n```';
+              sourceArea.readOnly = true;
+              
+              // 图表容器
+              const diagramDiv = document.createElement('div');
+              diagramDiv.className = 'mermaid-diagram';
+              diagramDiv.innerHTML = svg;
+              
+              wrapper.appendChild(header);
+              wrapper.appendChild(diagramDiv);
+              wrapper.appendChild(sourceArea);
+              
+              // 替换原有的代码块为渲染后的图表
+              pre.replaceWith(wrapper);
             } catch (e) {
               console.error('Mermaid render error:', e);
               // 渲染失败时保留原始代码块或显示错误提示
@@ -840,9 +915,82 @@ import DOMPurify from 'dompurify';
     return csvLines.join('\n');
   }
 
+  /**
+   * 下载 SVG 内容为文件
+   */
+  function downloadSVG(svgElement, filename) {
+    const svgData = new XMLSerializer().serializeToString(svgElement);
+    const blob = new Blob([svgData], { type: 'image/svg+xml;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename || 'diagram.svg';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }
+
+  /**
+   * 将 SVG 转换为 PNG 并下载
+   */
+  function downloadPNG(svgElement, filename) {
+    const svgData = new XMLSerializer().serializeToString(svgElement);
+    const canvas = document.createElement('canvas');
+    const ctx = canvas.getContext('2d');
+    const img = new Image();
+
+    // 获取 SVG 实际尺寸（优先从 viewBox，其次 width/height 属性）
+    let width = 800;
+    let height = 600;
+    const viewBox = svgElement.getAttribute('viewBox');
+    if (viewBox) {
+      const parts = viewBox.split(' ').map(Number);
+      if (parts.length >= 4) {
+        width = parts[2];
+        height = parts[3];
+      }
+    } else {
+      const w = parseFloat(svgElement.getAttribute('width'));
+      const h = parseFloat(svgElement.getAttribute('height'));
+      if (w) width = w;
+      if (h) height = h;
+    }
+
+    // 使用 devicePixelRatio 提高清晰度
+    const dpr = window.devicePixelRatio || 1;
+    const scale = Math.max(dpr, 2); // 至少 2 倍清晰度
+
+    img.onload = () => {
+      canvas.width = width * scale;
+      canvas.height = height * scale;
+      // 设置 Canvas CSS 尺寸
+      canvas.style.width = width + 'px';
+      canvas.style.height = height + 'px';
+      ctx.scale(scale, scale);
+      // 填充白色背景（避免暗色主题下背景透明或变黑）
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(0, 0, width, height);
+      ctx.drawImage(img, 0, 0, width, height);
+      const pngUrl = canvas.toDataURL('image/png');
+      const a = document.createElement('a');
+      a.href = pngUrl;
+      a.download = filename || 'diagram.png';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+    };
+
+    img.onerror = (err) => {
+      console.error('PNG conversion failed:', err);
+    };
+
+    img.src = 'data:image/svg+xml;base64,' + btoa(unescape(encodeURIComponent(svgData)));
+  }
+
   // ==========================================
   // 4. 事件绑定与交互逻辑
-  // ==========================================
+  // ==================================================
 
   function bindEvents(previewContainer, editorContainer, initialRawText) {
     let isPreviewMode = true; // 当前是否为预览模式
@@ -1233,6 +1381,93 @@ import DOMPurify from 'dompurify';
             console.error('Table copy failed:', err);
           });
         }
+      }
+    });
+
+    // --- Mermaid 图表操作 ---
+    // 源码/渲染切换
+    previewContainer.addEventListener('click', (e) => {
+      const mermaidToggleBtn = e.target.closest('.md-mermaid-toggle');
+      if (mermaidToggleBtn) {
+        e.preventDefault();
+        const wrapper = mermaidToggleBtn.closest('.md-mermaid-block');
+        if (!wrapper) return;
+        const diagram = wrapper.querySelector('.mermaid-diagram');
+        const sourceArea = wrapper.querySelector('.md-mermaid-source');
+        if (diagram && sourceArea) {
+          if (diagram.style.display === 'none') {
+            diagram.style.display = 'block';
+            sourceArea.style.display = 'none';
+            mermaidToggleBtn.textContent = '源码';
+          } else {
+            diagram.style.display = 'none';
+            sourceArea.style.display = 'block';
+            mermaidToggleBtn.textContent = '渲染';
+          }
+        }
+      }
+    });
+
+    // 复制 MD 功能
+    previewContainer.addEventListener('click', (e) => {
+      const copyMermaidBtn = e.target.closest('.md-copy-mermaid-btn');
+      if (copyMermaidBtn) {
+        e.preventDefault();
+        const wrapper = copyMermaidBtn.closest('.md-mermaid-block');
+        const sourceArea = wrapper ? wrapper.querySelector('.md-mermaid-source') : null;
+        const mdSource = sourceArea ? sourceArea.value : '';
+        if (mdSource) {
+          navigator.clipboard.writeText(mdSource).then(() => {
+            const originalText = copyMermaidBtn.textContent;
+            copyMermaidBtn.textContent = '已复制';
+            copyMermaidBtn.classList.add('copied');
+            setTimeout(() => {
+              copyMermaidBtn.textContent = originalText;
+              copyMermaidBtn.classList.remove('copied');
+            }, 2000);
+          }).catch(err => {
+            console.error('Mermaid copy failed:', err);
+          });
+        }
+      }
+    });
+
+    // 下载下拉菜单交互
+    previewContainer.addEventListener('click', (e) => {
+      const downloadTrigger = e.target.closest('.md-mermaid-download-trigger');
+      if (downloadTrigger) {
+        e.preventDefault();
+        const menu = downloadTrigger.nextElementSibling;
+        if (menu) {
+          menu.style.display = menu.style.display === 'block' ? 'none' : 'block';
+        }
+        return;
+      }
+
+      const downloadItem = e.target.closest('.md-mermaid-download-item');
+      if (downloadItem) {
+        e.preventDefault();
+        const format = downloadItem.getAttribute('data-format');
+        const wrapper = downloadItem.closest('.md-mermaid-block');
+        const svgElement = wrapper ? wrapper.querySelector('.mermaid-diagram svg') : null;
+        if (svgElement) {
+          if (format === 'png') {
+            downloadPNG(svgElement, 'mermaid-diagram.png');
+          } else if (format === 'svg') {
+            downloadSVG(svgElement, 'mermaid-diagram.svg');
+          }
+        }
+        // 关闭下拉菜单
+        const menu = downloadItem.closest('.md-mermaid-download-menu');
+        if (menu) menu.style.display = 'none';
+      }
+    });
+
+    // 点击页面其他地方关闭下载下拉菜单
+    document.addEventListener('click', (e) => {
+      if (!e.target.closest('.md-mermaid-download')) {
+        const menus = document.querySelectorAll('.md-mermaid-download-menu');
+        menus.forEach(menu => menu.style.display = 'none');
       }
     });
 
