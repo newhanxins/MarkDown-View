@@ -141,6 +141,13 @@
     #md-preview-wrapper.active {
       display: block;
     }
+
+    /* 预览模式下覆盖 body 的 flex 布局，避免影响滚动 */
+    body.preview-mode {
+      display: block;
+      padding: 0;
+      min-height: auto;
+    }
     #back-btn {
       position: fixed;
       bottom: 20px;
@@ -410,9 +417,12 @@ $$\\int_{a}^{b} f(x) dx = F(b) - F(a)$$`
       
       // 显示预览区域，隐藏上传卡片
       uploadCard.style.display = 'none';
-      previewWrapper.style.display = 'block';
-      previewWrapper.classList.add('active');
+      // previewWrapper.style.display = 'block';
+      previewWrapper.classList.remove('active');
+      previewWrapper.style.display = 'none';
       backBtn.style.display = 'block';
+      // 添加预览模式类，覆盖 body 的 flex 布局，避免影响滚动
+      document.body.classList.add('preview-mode');
       
       // 设置页面标题
       document.title = filename ? `MD Viewer - ${filename}` : 'MD Viewer 预览';
@@ -435,6 +445,9 @@ $$\\int_{a}^{b} f(x) dx = F(b) - F(a)$$`
       const mainContainer = document.getElementById('md-main-container');
       if (toolbar) toolbar.remove();
       if (mainContainer) mainContainer.remove();
+      
+      // 恢复 body 布局
+      document.body.classList.remove('preview-mode');
       
       // 显示上传卡片
       uploadCard.style.display = 'block';

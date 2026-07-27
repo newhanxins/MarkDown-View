@@ -667,6 +667,9 @@ import DOMPurify from 'dompurify';
         const link = e.target.closest('.toc-link');
         if (link) {
           e.preventDefault();
+          // 设置标志位，暂时禁用滚动监听，避免闪烁
+          window.__isClickingTOC = true;
+          
           // 【新增】处理选中状态
           const allLinks = tocContainer.querySelectorAll('.toc-link');
           allLinks.forEach(l => l.classList.remove('active'));
@@ -686,6 +689,11 @@ import DOMPurify from 'dompurify';
             //   behavior: "smooth"
             // });
           }
+          
+          // 延迟清除标志位（等待平滑滚动完成）
+          setTimeout(() => {
+            window.__isClickingTOC = false;
+          }, 1000);
         }
       });
     }
@@ -1485,6 +1493,63 @@ import DOMPurify from 'dompurify';
         document.body.removeChild(a);
         URL.revokeObjectURL(url);
       });
+    }
+
+    // --- 【新增】滚动时同步更新目录高亮 ---
+    // 监听右侧内容区域滚动，自动高亮当前可见的章节
+    if (CONFIG.enableTOC) {
+      let ticking = false;
+      const updateActiveTOCOnScroll = () => {
+        // 如果正在点击目录，跳过滚动监听，避免与点击选中状态冲突导致闪烁
+        if (window.__isClickingTOC) return;
+        if (!ticking) {
+          window.requestAnimationFrame(() => {
+            const headers = previewContainer.querySelectorAll('h1, h2, h3, h4, h5, h6');
+            if (headers.length === 0) return;
+            
+            // 找到当前在视口中最靠近顶部（且在上方）的标题
+            let activeHeader = null;
+            const scrollTop = window.pageYOffset || document.documentElement.scrollTop;
+            const offset = 80; // 工具栏高度偏移量
+            
+            for (let i = headers.length - 1; i >= 0; i--) {
+              const header = headers[i];
+              const headerTop = header.getBoundingClientRect().top + window.pageYOffset - offset;
+              if (headerTop <= scrollTop + offset) {
+                activeHeader = header;
+                break;
+              }
+            }
+            
+            // 如果没有找到（表示在页面顶部），选中第一个标题
+            if (!activeHeader && headers.length > 0) {
+              activeHeader = headers[0];
+            }
+            
+            if (activeHeader) {
+              const tocSidebar = document.getElementById('md-toc-sidebar');
+              if (tocSidebar) {
+                const allLinks = tocSidebar.querySelectorAll('.toc-link');
+                allLinks.forEach(l => l.classList.remove('active'));
+                const activeLink = tocSidebar.querySelector(`.toc-link[data-target="${activeHeader.id}"]`);
+                if (activeLink) {
+                  activeLink.classList.add('active');
+                  // 只有当目录项不在可视区域内时才滚动，避免高频触发导致闪烁
+                  const sidebarRect = tocSidebar.getBoundingClientRect();
+                  const linkRect = activeLink.getBoundingClientRect();
+                  if (linkRect.top < sidebarRect.top || linkRect.bottom > sidebarRect.bottom) {
+                    activeLink.scrollIntoView({ block: 'nearest' });
+                  }
+                }
+              }
+            }
+            ticking = false;
+          });
+          ticking = true;
+        }
+      };
+      
+      window.addEventListener('scroll', updateActiveTOCOnScroll);
     }
   }
 

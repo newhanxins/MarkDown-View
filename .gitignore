@@ -25,3 +25,6 @@ release
 package-lock.json
 pnpm-lock.yaml
 yarn.lock
+
+# 忽略所有文件名中包含“副本”的文件（无论位于哪个目录）
+*副本*
