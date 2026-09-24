@@ -91,17 +91,28 @@
 md-view/
 ├── package.json              # 项目配置文件（依赖、脚本等）
 ├── vite.config.js            # Vite 构建配置
+├── build-crx.js              # .crx 打包脚本（签名生成安装包）
 ├── README.md                 # 项目说明文档
 ├── index.html                # 开发测试页面（本地调试用）
 ├── public/                   # 静态资源目录
-│   ├── manifest.json         # Chrome 插件清单文件
-│   └── icons/                # 插件图标
-│       ├── icon16.png        # 16x16 图标
-│       ├── icon48.png        # 48x48 图标
-│       └── icon128.png       # 128x128 图标
-└── src/                      # 源代码目录
-    ├── content.js            # 内容脚本（核心逻辑）
-    └── content.css           # 样式文件
+│   ├── manifest.json         # Chrome 插件清单文件 (Manifest V3)
+│   ├── icons/                # 插件图标
+│   │   ├── icon16.png        # 16x16 图标
+│   │   ├── icon48.png        # 48x48 图标
+│   │   └── icon128.png       # 128x128 图标
+│   └── libs/                 # 第三方库（本地打包）
+│       ├── mermaid.min.js    # Mermaid 图表库
+│       ├── katex.min.js      # KaTeX 数学公式库
+│       ├── katex.min.css     # KaTeX 样式文件
+│       └── auto-render.min.js # KaTeX 自动渲染插件
+├── src/                      # 源代码目录
+│   ├── content.js            # 内容脚本（核心逻辑 ~1500 行）
+│   ├── content.css           # 样式文件（亮/暗色主题）
+│   └── dev-main.js           # 开发模式入口（测试页面用）
+├── dist/                     # Vite 构建输出目录（加载扩展时指向此目录）
+└── release/                  # .crx 打包输出目录
+    ├── key.pem               # RSA 签名私钥（务必保存好）
+    └── md-viewer-v1.0.0.crx  # 可直接安装到 Chrome 的扩展包
 ```
 
 ### 关键文件说明
@@ -113,6 +124,8 @@ md-view/
 | `content.css` | 样式文件 | 定义工具栏和预览界面样式 |
 | `vite.config.js` | 构建配置 | 配置 Vite 打包输出 |
 | `package.json` | 项目配置 | 管理依赖和构建脚本 |
+| `build-crx.js` | 打包脚本 | 将 dist/ 签名打包为 .crx 安装包 |
+| `dev-main.js` | 开发入口 | 开发测试页面入口，模拟插件环境 |
 
 ---
 
@@ -522,6 +535,19 @@ npm run build
 
 #### 2. 打包扩展
 
+**方式一：一键打包 .crx（推荐）**
+
+```bash
+# 先构建项目，再打包为 .crx 安装包
+npm run build:pack
+```
+
+执行后会在 `release/` 目录下生成：
+- `md-viewer-v{version}.crx` — 可直接拖拽安装到 Chrome
+- `key.pem` — 签名私钥（务必保存好，更新版本时复用可保持扩展 ID 一致）
+
+**方式二：手动打包为 zip（用于 Chrome Web Store）**
+
 ```bash
 # 压缩 dist 目录为 zip 文件
 cd dist
@@ -534,7 +560,38 @@ zip -r ../md-viewer.zip .
 Compress-Archive -Path dist\* -DestinationPath md-viewer.zip
 ```
 
-#### 3. 上传到 Chrome Web Store
+#### 3. 安装 .crx 到 Chrome
+
+`.crx` 文件生成后，有以下几种安装方式：
+
+**方式一：加载已解压的扩展程序（推荐，开发调试使用）**
+
+1. 打开 Chrome，访问 `chrome://extensions/`
+2. 右上角开启 **开发者模式**
+3. 点击 **"加载已解压的扩展程序"**
+4. 选择项目的 `dist/` 文件夹
+
+> 每次修改代码后运行 `npm run build`，然后点击扩展卡片上的刷新按钮即可更新。
+
+**方式二：拖拽安装 .crx（需要配置注册表）**
+
+Chrome 67+ 默认禁止非 Chrome Web Store 的 .crx 拖拽安装。Windows 用户可通过注册表配置允许：
+
+```cmd
+# 以管理员身份运行 cmd，执行以下命令
+reg add "HKEY_LOCAL_MACHINE\SOFTWARE\Policies\Google\Chrome\ExtensionInstallSources" /v 1 /t REG_SZ /d "file:///" /f
+```
+
+配置后重启 Chrome，访问 `chrome://extensions/`，开启开发者模式，直接拖拽 `release/md-viewer-v{version}.crx` 到扩展页面即可安装。
+
+**方式三：命令行安装（企业环境）**
+
+```bash
+# 关闭所有 Chrome 窗口后执行
+"C:\Program Files\Google\Chrome\Application\chrome.exe" --install-extension="release/md-viewer-v1.0.0.crx"
+```
+
+#### 4. 上传到 Chrome Web Store
 
 1. 访问 [Chrome Web Store Developer Dashboard](https://chrome.google.com/webstore/devconsole/)
 2. 点击 "新增项目"
@@ -542,7 +599,7 @@ Compress-Archive -Path dist\* -DestinationPath md-viewer.zip
 4. 填写详细信息（描述、截图、分类等）
 5. 提交审核
 
-#### 4. 审核注意事项
+#### 5. 审核注意事项
 
 - 提供清晰的截图和演示视频
 - 详细说明隐私政策（本插件不收集任何数据）

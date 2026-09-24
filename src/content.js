@@ -3,16 +3,28 @@ import './content.css';
 // 导入核心依赖库
 import { marked } from 'marked';
 import DOMPurify from 'dompurify';
-// import mermaid from 'mermaid';
+
 
 (function() {
   'use strict';
+
+  // 【关键】content script 一执行就立即回到顶部，防止浏览器基于原始 DOM 恢复滚动位置
+  window.scrollTo(0, 0);
+
+  // 禁用浏览器自动恢复滚动位置（对前进/后退导航生效）
+  if ('scrollRestoration' in history) {
+    history.scrollRestoration = 'manual';
+  }
 
   // ==========================================
   // 1. 初始化配置与全局变量
   // ==========================================
 
-  // 【新增】兼容函数：在插件环境和本地测试环境中都能获取资源路径
+  /**
+   * 兼容函数：在插件环境和本地测试环境中都能获取资源路径
+   * @param {string} path - 资源相对路径
+   * @returns {string} 完整的资源 URL
+   */
   function getAssetPath(path) {
     // 如果是 Chrome 扩展环境
     if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.getURL) {
@@ -114,6 +126,8 @@ import DOMPurify from 'dompurify';
 
   /**
    * 动态加载 Mermaid 库
+   * 优先使用 manifest 预加载的全局变量，否则通过 loadExternalLib 动态加载
+   * @returns {Promise<Object>} Mermaid 实例对象
    */
   async function loadMermaid() {
     if (mermaidLoaded && mermaidInstance) return mermaidInstance;
@@ -151,65 +165,10 @@ import DOMPurify from 'dompurify';
 
   }
 
-
-
-
-
-  async function loadMermaidsss() {
-    if (mermaidLoaded && mermaidInstance) return mermaidInstance;
-    
-    // 如果全局已经存在，直接使用
-    if (window.mermaid) {
-      mermaidInstance = window.mermaid;
-      mermaidLoaded = true;
-      if (!mermaidInstance.__initialized) {
-         mermaidInstance.initialize({ startOnLoad: false, theme: 'default', securityLevel: 'loose' });
-         mermaidInstance.__initialized = true;
-      }
-      return mermaidInstance;
-    }
-
-    try {
-      // 1. 获取本地文件内容
-      const response = await fetch(MERMAID_LOCAL_PATH);
-      if (!response.ok) throw new Error(`Failed to fetch Mermaid: ${response.status}`);
-      
-      const scriptText = await response.text();
-      
-      // 2. 创建 Blob 对象
-      const blob = new Blob([scriptText], { type: 'application/javascript' });
-      const blobUrl = URL.createObjectURL(blob);
-      
-      // 3. 通过 Blob URL 加载脚本
-      await new Promise((resolve, reject) => {
-        const script = document.createElement('script');
-        script.src = blobUrl;
-        script.onload = resolve;
-        script.onerror = reject;
-        document.head.appendChild(script);
-      });
-      
-      // 4. 清理 Blob URL
-      URL.revokeObjectURL(blobUrl);
-      
-      // 5. 检查全局变量
-      if (window.mermaid) {
-        mermaidInstance = window.mermaid;
-        mermaidLoaded = true;
-        mermaidInstance.initialize({ startOnLoad: false, theme: 'default', securityLevel: 'loose' });
-        mermaidInstance.__initialized = true;
-        return mermaidInstance;
-      } else {
-        throw new Error('Mermaid global object not found after Blob load');
-      }
-    } catch (error) {
-      console.error('Mermaid load failed:', error);
-      throw error;
-    }
-  }
-
   /**
    * 动态加载 KaTeX
+   * 按顺序加载 CSS -> katex.js -> auto-render.js
+   * @returns {Promise<void>}
    */
   async function loadKaTeX() {
     if (katexLoaded) return;
@@ -254,20 +213,37 @@ import DOMPurify from 'dompurify';
    */
   function isMarkdownFile() {
     const pathname = window.location.pathname;
-    // 检查路径后缀
+    // 1. 检查路径后缀
     if (pathname.endsWith('.md') || pathname.endsWith('.markdown')) return true;
     
-    // 检查 MIME 类型
+    // 2. 检查 MIME 类型
     const contentType = document.contentType;
     if (contentType && (contentType.includes('text/markdown') || contentType.includes('text/x-markdown'))) return true;
 
-    // 【新增】兼容本地测试：如果 body 下有非空的 pre 标签（排除 raw-md）且没有插件 UI，也视为 md 文件
+    // 3. 【新增】排除已知非 Markdown 文件扩展名
+    const extMatch = pathname.match(/\.([a-zA-Z0-9]+)$/);
+    if (extMatch) {
+      const knownNonMdExts = ['js', 'json', 'css', 'html', 'htm', 'xml', 'txt', 'csv', 'ts', 'py', 'java', 'c', 'cpp', 'h', 'php', 'rb', 'go', 'rs', 'sh', 'yaml', 'yml', 'toml', 'ini', 'log', 'sql', 'bat', 'cmd', 'ps1', 'jsx', 'tsx', 'vue', 'scss', 'sass', 'less'];
+      if (knownNonMdExts.includes(extMatch[1].toLowerCase())) {
+        return false;
+      }
+    }
+
+    // 4. 【新增】排除已知非 Markdown MIME 类型
+    if (contentType) {
+      const nonMdTypes = ['javascript', 'css', 'html', 'json', 'xml', 'csv'];
+      if (nonMdTypes.some(type => contentType.includes(type))) {
+        return false;
+      }
+    }
+
+    // 5. 【保留】兼容本地测试：如果 body 下有非空的 pre 标签（排除 raw-md）且没有插件 UI，也视为 md 文件
     const bodyPre = document.querySelector('body > pre');
     if (bodyPre && bodyPre.id !== 'raw-md' && bodyPre.textContent.trim().length > 0 && !document.getElementById('md-viewer-toolbar')) {
         return true;
     }
 
-    // 【新增】兼容开发模式：如果存在 raw-md 元素且有内容
+    // 6. 【保留】兼容开发模式：如果存在 raw-md 元素且有内容
     const rawMd = document.getElementById('raw-md');
     if (rawMd && rawMd.textContent.trim().length > 0) {
         return true;
@@ -465,7 +441,10 @@ import DOMPurify from 'dompurify';
     headers.forEach((header, index) => {
       // 【关键修复】直接在真实的 DOM 元素上设置 ID
       const id = `heading-${index}`;
-      header.id = id; 
+      // 【关键】设置 id 前保存滚动位置，防止浏览器因 hash 匹配自动滚动
+      const savedScrollTop = window.scrollY;
+      header.id = id;
+      window.scrollTo(0, savedScrollTop); 
       
       // 【关键】建立映射：去除首尾空格后的文本 -> 新 ID
       const text = header.textContent.trim();
@@ -599,9 +578,14 @@ import DOMPurify from 'dompurify';
 
   /**
    * 主渲染入口函数
+   * 检测当前页面是否为 Markdown 文件，创建 UI 并渲染预览
+   * @returns {Promise<void>}
    */
   async function renderMarkdown() {
     if (!isMarkdownFile()) return;
+
+    // 【关键】页面渲染前强制回到顶部，防止浏览器基于原始内容恢复滚动位置
+    window.scrollTo(0, 0);
 
     // 清除已有 UI，防止重复创建（开发模式下多次加载时有用）
     const existingToolbar = document.getElementById('md-viewer-toolbar');
@@ -678,6 +662,8 @@ import DOMPurify from 'dompurify';
           const targetId = e.target.getAttribute('data-target');
           const targetEl = document.getElementById(targetId);
           if (targetEl) {
+            // 保存当前选中目录，刷新后恢复位置
+            sessionStorage.setItem('md-viewer-last-heading', targetId);
             // 方式一 滚动到指定元素
             targetEl.scrollIntoView({ behavior: 'smooth' });
             // 方式二 获取元素位置并减去工具栏高度（解决滚动位置偏移）
@@ -700,7 +686,20 @@ import DOMPurify from 'dompurify';
 
     // 绑定交互事件
     bindEvents(previewContainer, editorContainer, rawText);
-    
+
+    // 恢复上次浏览位置（页面加载时瞬间跳转，不使用动画）
+    const savedHeadingId = sessionStorage.getItem('md-viewer-last-heading');
+    if (savedHeadingId) {
+      const targetEl = document.getElementById(savedHeadingId);
+      if (targetEl) {
+        targetEl.scrollIntoView({ behavior: 'auto', block: 'start' });
+      }
+      sessionStorage.removeItem('md-viewer-last-heading');
+    } else {
+      // 没有记录时回到顶部（防止浏览器基于原始内容恢复到底部）
+      window.scrollTo(0, 0);
+    }
+
     // 隐藏浏览器默认的原始内容显示
     hideOriginalContent();
   }
@@ -724,6 +723,7 @@ import DOMPurify from 'dompurify';
 
   /**
    * 为代码块添加顶部工具栏（语言标签 + 操作按钮）和源码/渲染切换功能
+   * @param {HTMLElement} previewContainer - 包含渲染后内容的容器元素
    */
   function addCodeCopyButtons(previewContainer) {
     const codeBlocks = previewContainer.querySelectorAll('pre');
@@ -801,6 +801,8 @@ import DOMPurify from 'dompurify';
 
   /**
    * 从 Markdown 文本中提取所有表格源码
+   * @param {string} mdText - 原始 Markdown 文本
+   * @returns {string[]} 表格源码字符串数组
    */
   function extractMarkdownTables(mdText) {
     if (!mdText) return [];
@@ -828,6 +830,7 @@ import DOMPurify from 'dompurify';
 
   /**
    * 为表格添加顶部工具栏（类型标签 + 操作按钮）
+   * @param {HTMLElement} previewContainer - 包含渲染后内容的容器元素
    */
   function addTableActions(previewContainer) {
     const tables = previewContainer.querySelectorAll('table');
@@ -903,6 +906,8 @@ import DOMPurify from 'dompurify';
 
   /**
    * 将 HTML 表格数据转换为 CSV 字符串
+   * @param {HTMLTableElement} table - HTML 表格元素
+   * @returns {string} CSV 格式字符串
    */
   function tableToCSV(table) {
     const rows = table.querySelectorAll('tr');
@@ -925,6 +930,8 @@ import DOMPurify from 'dompurify';
 
   /**
    * 下载 SVG 内容为文件
+   * @param {SVGElement} svgElement - SVG 元素
+   * @param {string} [filename='diagram.svg'] - 下载文件名
    */
   function downloadSVG(svgElement, filename) {
     const svgData = new XMLSerializer().serializeToString(svgElement);
@@ -941,6 +948,8 @@ import DOMPurify from 'dompurify';
 
   /**
    * 将 SVG 转换为 PNG 并下载
+   * @param {SVGElement} svgElement - SVG 元素
+   * @param {string} [filename='diagram.png'] - 下载文件名
    */
   function downloadPNG(svgElement, filename) {
     const svgData = new XMLSerializer().serializeToString(svgElement);
@@ -994,6 +1003,41 @@ import DOMPurify from 'dompurify';
     };
 
     img.src = 'data:image/svg+xml;base64,' + btoa(unescape(encodeURIComponent(svgData)));
+  }
+
+  /**
+   * 将 HTML 表格转换为 Excel XML 字符串（兼容旧版 Excel）
+   * @param {HTMLTableElement} table - 表格 DOM 元素
+   * @returns {string} - Excel XML 格式的字符串
+   */
+  function tableToExcelXML(table) {
+    const rows = table.querySelectorAll('tr');
+    let xml = '<?xml version="1.0"?>\n';
+    xml += '<?mso-application progid="Excel.Sheet"?>\n';
+    xml += '<Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet" ';
+    xml += 'xmlns:o="urn:schemas-microsoft-com:office:office" ';
+    xml += 'xmlns:x="urn:schemas-microsoft-com:office:excel" ';
+    xml += 'xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet">\n';
+    xml += '  <Worksheet ss:Name="Sheet1">\n';
+    xml += '    <Table>\n';
+
+    rows.forEach(row => {
+      xml += '      <Row>\n';
+      const cells = row.querySelectorAll('th, td');
+      cells.forEach(cell => {
+        const text = cell.textContent.trim();
+        // 判断是否为数字
+        const num = Number(text);
+        const type = !isNaN(num) && text !== '' ? 'Number' : 'String';
+        xml += `        <Cell><Data ss:Type="${type}">${text}</Data></Cell>\n`;
+      });
+      xml += '      </Row>\n';
+    });
+
+    xml += '    </Table>\n';
+    xml += '  </Worksheet>\n';
+    xml += '</Workbook>';
+    return xml;
   }
 
   // ==========================================
@@ -1538,7 +1582,10 @@ import DOMPurify from 'dompurify';
                   const sidebarRect = tocSidebar.getBoundingClientRect();
                   const linkRect = activeLink.getBoundingClientRect();
                   if (linkRect.top < sidebarRect.top || linkRect.bottom > sidebarRect.bottom) {
-                    activeLink.scrollIntoView({ block: 'nearest' });
+                    // 使用 scrollTop 手动滚动，避免 scrollIntoView 触发 window scroll 事件导致循环
+                    tocSidebar.scrollTop = activeLink.offsetTop - 20;
+                    // scrollIntoView 方法有问题导致拖动滚动结束还会自动滚动，避免 scrollIntoView 触发 window scroll 事件导致循环
+                    //activeLink.scrollIntoView({ block: 'nearest' });
                   }
                 }
               }
