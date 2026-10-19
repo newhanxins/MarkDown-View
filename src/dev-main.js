@@ -208,6 +208,10 @@ async function loadMarkdown(content, filename) {
   rawPre.textContent = content;
   rawPre.style.display = 'none';
   
+  // 设置全局变量，供 content.js 读取
+  window.__mdRawContent = content;
+  window.__mdFileName = filename || 'untitled.md';
+  
   // 显示预览区域，隐藏上传卡片
   uploadCard.style.display = 'none';
   // previewWrapper.style.display = 'block';
@@ -218,7 +222,7 @@ async function loadMarkdown(content, filename) {
   document.body.classList.add('preview-mode');
   
   // 设置页面标题
-  document.title = filename ? `MD Viewer - \${filename}` : 'MD Viewer 预览';
+  document.title = filename ? `MD Viewer - ${filename}` : 'MD Viewer 预览';
 
   // 触发渲染（如果 content.js 已加载）
   if (window.__mdRenderMarkdown) {
@@ -234,8 +238,8 @@ backBtn.addEventListener('click', () => {
   previewWrapper.style.display = 'none';
   
   // 清除插件 UI
-  const toolbar = document.getElementById('md-viewer-toolbar');
-  const mainContainer = document.getElementById('md-main-container');
+  const toolbar = document.getElementById('md-viewer-header');
+  const mainContainer = document.getElementById('md-viewer-main');
   if (toolbar) toolbar.remove();
   if (mainContainer) mainContainer.remove();
   
@@ -265,9 +269,76 @@ function handleFile(file) {
   fileNameDisplay.textContent = file.name;
   const reader = new FileReader();
   reader.onload = (e) => {
-    loadMarkdown(e.target.result, file.name);
+    const content = e.target.result;
+    // 保存到最近打开记录
+    saveRecentFile(file.name, content);
+    loadMarkdown(content, file.name);
   };
   reader.readAsText(file);
+}
+
+// 保存到最近打开记录
+function saveRecentFile(filename, content) {
+  try {
+    let recent = JSON.parse(localStorage.getItem('md-viewer-recent') || '[]');
+    // 去重并限制数量
+    recent = recent.filter(item => item.name !== filename);
+    recent.unshift({ name: filename, path: filename, content: content, time: Date.now() });
+    recent = recent.slice(0, 10); // 最多保存 10 个
+    localStorage.setItem('md-viewer-recent', JSON.stringify(recent));
+    renderRecentFiles();
+  } catch (e) {
+    console.warn('保存最近打开记录失败:', e);
+  }
+}
+
+// 渲染最近打开文件列表
+function renderRecentFiles() {
+  const recentFilesEl = document.getElementById('recent-files');
+  const listEl = document.getElementById('recent-files-list');
+  if (!recentFilesEl || !listEl) return;
+
+  try {
+    let recent = JSON.parse(localStorage.getItem('md-viewer-recent') || '[]');
+    // 过滤掉没有 content 字段的无效记录
+    recent = recent.filter(item => item && item.content && item.content.trim().length > 0);
+    // 保存过滤后的记录
+    localStorage.setItem('md-viewer-recent', JSON.stringify(recent));
+    if (recent.length === 0) {
+      recentFilesEl.style.display = 'none';
+      return;
+    }
+
+    listEl.innerHTML = recent.map((item, index) => {
+      let timeStr = '';
+      if (item.time) {
+        const date = new Date(item.time);
+        if (!isNaN(date.getTime())) {
+          timeStr = `${date.getMonth() + 1}/${date.getDate()} ${date.getHours().toString().padStart(2, '0')}:${date.getMinutes().toString().padStart(2, '0')}`;
+        }
+      }
+      return `<a class="recent-file-item" data-index="${index}" title="${item.name}">${item.name}<span class="recent-file-time">${timeStr}</span></a>`;
+    }).join('');
+
+    recentFilesEl.style.display = 'block';
+
+    // 绑定点击事件
+    listEl.querySelectorAll('.recent-file-item').forEach(item => {
+      item.addEventListener('click', (e) => {
+        e.preventDefault();
+        const idx = parseInt(e.currentTarget.dataset.index);
+        const file = recent[idx];
+        if (file && file.content) {
+          fileNameDisplay.textContent = file.name;
+          loadMarkdown(file.content, file.name);
+        } else if (file) {
+          alert('该文件记录中没有保存内容，请重新选择文件。');
+        }
+      });
+    });
+  } catch (e) {
+    console.warn('渲染最近打开记录失败:', e);
+  }
 }
 
 // 点击选择按钮
@@ -326,8 +397,12 @@ document.querySelectorAll('.demo-links a').forEach(link => {
     const demoKey = e.target.dataset.demo;
     const demoContent = demos[demoKey];
     if (demoContent) {
-      fileNameDisplay.textContent = `\${demoKey}.md`;
-      loadMarkdown(demoContent, `\${demoKey}.md`);
+      fileNameDisplay.textContent = `${demoKey}.md`;
+      saveRecentFile(`${demoKey}.md`, demoContent);
+      loadMarkdown(demoContent, `${demoKey}.md`);
     }
   });
 });
+
+// 页面加载时渲染最近打开文件列表
+renderRecentFiles();

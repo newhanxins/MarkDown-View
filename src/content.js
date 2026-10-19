@@ -3,13 +3,23 @@ import './content.css';
 // 导入核心依赖库
 import { marked } from 'marked';
 import DOMPurify from 'dompurify';
+import hljs from 'highlight.js';
+// 导入功能模块
+import { takeScreenshot, takeManualScreenshot } from './modules/screenshot.js';
+import { addRecentFile, renderRecentFiles } from './modules/recent-files.js';
+import { showShortcutsDialog } from './modules/shortcuts.js';
 
 
 (function() {
   'use strict';
 
   // 【关键】content script 一执行就立即回到顶部，防止浏览器基于原始 DOM 恢复滚动位置
-  window.scrollTo(0, 0);
+  const contentAreaEl = document.getElementById('md-content-area');
+  if (contentAreaEl) {
+    contentAreaEl.scrollTo({ top: 0 });
+  } else {
+    window.scrollTo(0, 0);
+  }
 
   // 禁用浏览器自动恢复滚动位置（对前进/后退导航生效）
   if ('scrollRestoration' in history) {
@@ -68,7 +78,239 @@ import DOMPurify from 'dompurify';
     enableTOC: true,      // 是否启用左侧目录导航
     enableMermaid: true,  // 是否启用 Mermaid 图表渲染
     enableEditor: true,    // 是否启用实时编辑功能
-    enableMath: true // 新增：数学公式开关
+    enableMath: true, // 新增：数学公式开关
+    enableEmoji: true,     // 是否启用 Emoji 短代码渲染
+    enableHighlight: true  // 是否启用代码语法高亮
+  };
+
+  // ==========================================
+  // Emoji 短代码映射表
+  // ==========================================
+  const EMOJI_MAP = {
+    ':smile:': '😄', ':grin:': '😁', ':joy:': '😂', ':sweat_smile:': '',
+    ':laughing:': '😆', ':wink:': '😉', ':blush:': '😊', ':yum:': '😋',
+    ':sunglasses:': '😎', ':heart_eyes:': '😍', ':kissing_heart:': '😘',
+    ':kissing:': '😗', ':relaxed:': '☺️', ':thinking:': '🤔', ':neutral_face:': '😐',
+    ':expressionless:': '😑', ':confused:': '😕', ':worried:': '',
+    ':frowning:': '😦', ':anguished:': '😧', ':open_mouth:': '😮',
+    ':astonished:': '😲', ':flushed:': '😳', ':scream:': '😱',
+    ':dizzy_face:': '😵', ':cool:': '😎', ':nerd:': '🤓',
+    ':heart:': '❤️', ':orange_heart:': '🧡', ':yellow_heart:': '💛',
+    ':green_heart:': '💚', ':blue_heart:': '💙', ':purple_heart:': '💜',
+    ':black_heart:': '🖤', ':broken_heart:': '💔', ':two_hearts:': '💕',
+    ':sparkling_heart:': '💖', ':star:': '⭐', ':fire:': '🔥',
+    ':rocket:': '🚀', ':zap:': '⚡', ':boom:': '💥', ':dash:': '💨',
+    ':muscle:': '💪', ':pray:': '🙏', ':clap:': '👏', ':thumbsup:': '👍',
+    ':thumbsdown:': '👎', ':ok_hand:': '👌', ':point_up:': '☝️',
+    ':point_right:': '👉', ':point_left:': '👈', ':raised_hand:': '✋',
+    ':wave:': '👋', ':v:': '✌️', ':crossed_fingers:': '🤞',
+    ':100:': '💯', ':zzz:': '💤', ':sweat_drops:': '💦', ':droplet:': '💧',
+    ':gift:': '🎁', ':tada:': '🎉', ':confetti_ball:': '🎊',
+    ':balloon:': '🎈', ':crown:': '👑', ':gem:': '💎', ':trophy:': '🏆',
+    ':medal:': '🏅', ':first_place:': '🥇', ':second_place:': '🥈',
+    ':third_place:': '🥉', ':soccer:': '⚽', ':basketball:': '🏀',
+    ':football:': '🏈', ':baseball:': '⚾', ':tennis:': '🎾',
+    ':ping_pong:': '🏓', ':badminton:': '🏸', ':golf:': '⛳',
+    ':trophy:': '🏆', ':dart:': '🎯', ':8ball:': '🎱', ':bowling:': '🎳',
+    ':video_game:': '🎮', ':joystick:': '🕹️', ':slot_machine:': '🎰',
+    ':dice:': '🎲', ':spades:': '♠️', ':hearts:': '♥️', ':diamonds:': '♦️',
+    ':clubs:': '♣️', ':joker:': '🃏', ':mahjong:': '🀄', ':flower_playing_cards:': '🎴',
+    ':art:': '🎨', ':headphones:': '🎧', ':microphone:': '🎤',
+    ':musical_note:': '🎵', ':notes:': '🎶', ':guitar:': '🎸',
+    ':musical_keyboard:': '🎹', ':trumpet:': '🎺', ':violin:': '🎻',
+    ':saxophone:': '🎷', ':drum:': '🥁', ':iphone:': '📱',
+    ':calling:': '📲', ':computer:': '💻', ':desktop_computer:': '🖥️',
+    ':keyboard:': '⌨️', ':printer:': '🖨️', ':mouse_three_button:': '🖱️',
+    ':trackball:': '🖲️', ':minidisc:': '💽', ':floppy_disk:': '💾',
+    ':cd:': '💿', ':dvd:': '📀', ':movie_camera:': '🎥', ':film_frames:': '🎞️',
+    ':projector:': '📽️', ':clapper:': '🎬', ':tv:': '📺', ':camera:': '📷',
+    ':camera_with_flash:': '', ':video_camera:': '📹', ':vhs:': '📼',
+    ':mag:': '🔍', ':mag_right:': '🔎', ':bulb:': '💡', ':flashlight:': '🔦',
+    ':candle:': '🕯️', ':battery:': '🔋', ':electric_plug:': '🔌',
+    ':lock:': '🔒', ':unlock:': '🔓', ':key:': '🔑', ':lock_with_ink_pen:': '🔏',
+    ':closed_lock_with_key:': '🔐', ':bookmark:': '🔖', ':link:': '🔗',
+    ':paperclip:': '📎', ':triangular_ruler:': '📐', ':straight_ruler:': '📏',
+    ':scissors:': '✂️', ':pen:': '🖊️', ':fountain_pen:': '🖋️',
+    ':paintbrush:': '🖌️', ':crayon:': '🖍️', ':memo:': '📝', ':pencil:': '✏️',
+    ':books:': '📚', ':book:': '📖', ':notebook:': '📓', ':ledger:': '📒',
+    ':scroll:': '📜', ':page_facing_up:': '📄', ':page_with_curl:': '📃',
+    ':newspaper:': '📰', ':bookmark_tabs:': '📑', ':label:': '🏷️',
+    ':moneybag:': '💰', ':credit_card:': '💳', ':chart:': '📊',
+    ':envelope:': '✉️', ':e-mail:': '📧', ':incoming_envelope:': '📨',
+    ':mailbox:': '📫', ':postbox:': '📮', ':package:': '📦',
+    ':postal_horn:': '📯', ':inbox_tray:': '📥', ':outbox_tray:': '📤',
+    ':white_check_mark:': '✅', ':heavy_check_mark:': '✔️', ':x:': '❌',
+    ':cross_mark:': '❌', ':negative_squared_cross_mark:': '❎',
+    ':question:': '❓', ':exclamation:': '❗', ':heavy_exclamation_mark:': '❗',
+    ':bangbang:': '‼️', ':interrobang:': '⁉️', ':information_source:': 'ℹ️',
+    ':warning:': '⚠️', ':underage:': '🔞', ':no_entry:': '⛔',
+    ':no_entry_sign:': '🚫', ':prohibited:': '🚫', ':no_mobile_phones:': '📵',
+    ':no_smoking:': '🚭', ':do_not_litter:': '🚯', ':non-potable_water:': '🚱',
+    ':no_bicycles:': '🚳', ':no_pedestrians:': '🚷', ':children_crossing:': '🚸',
+    ':beginner:': '🔰', ':recycle:': '♻️', ':trident:': '🔱',
+    ':fleur_de_lis:': '⚜️', ':part_alternation_mark:': '〽️',
+    ':congratulations:': '㊗️', ':secret:': '㊙️', ':u5272:': '🈹',
+    ':u5408:': '🈴', ':u55b6:': '🈺', ':u6307:': '🈯', ':u6708:': '🈷️',
+    ':u6709:': '🈶', ':u6b80:': '🈲', ':u7121:': '🈚', ':u7533:': '🈸',
+    ':u7981:': '🈲', ':u7a7a:': '🈳', ':sa:': '🈂️', ':ideograph_advantage:': '🉐',
+    ':accept:': '🉑', ':clock1:': '🕐', ':clock2:': '🕑', ':clock3:': '🕒',
+    ':clock4:': '🕓', ':clock5:': '🕔', ':clock6:': '🕕', ':clock7:': '🕖',
+    ':clock8:': '🕗', ':clock9:': '🕘', ':clock10:': '🕙', ':clock11:': '🕚',
+    ':clock12:': '🕛', ':clock130:': '🕜', ':clock230:': '🕝',
+    ':clock330:': '🕞', ':clock430:': '🕟', ':clock530:': '',
+    ':clock630:': '🕡', ':clock730:': '🕢', ':clock830:': '🕣',
+    ':clock930:': '🕤', ':clock1030:': '🕥', ':clock1130:': '🕦',
+    ':clock1230:': '🕧', ':female_sign:': '♀️', ':male_sign:': '♂️',
+    ':transgender_symbol:': '⚧️', ':dna:': '🧬', ':virus:': '🦠',
+    ':microbe:': '🦠', ':bone:': '🦴', ':tooth:': '🦷', ':eye:': '👁️',
+    ':ear:': '👂', ':nose:': '👃', ':brain:': '🧠', ':anatomical_heart:': '🫀',
+    ':lungs:': '🫁', ':stethoscope:': '🩺', ':syringe:': '💉',
+    ':pill:': '💊', ':blood:': '🩸', ':bandage:': '🩹', ':crutch:': '🩼',
+    ':wheelchair:': '♿', ':probing_cane:': '🦯', ':white_cane:': '🦯',
+    ':construction_worker:': '👷', ':mechanic:': '🧑‍🔧', ':farmer:': '👨‍🌾',
+    ':cook:': '🧑‍🍳', ':health_worker:': '🧑‍️', ':scientist:': '🧑‍🔬',
+    ':artist:': '🧑‍', ':firefighter:': '🧑‍🚒', ':pilot:': '👨‍✈️',
+    ':astronaut:': '👨‍🚀', ':judge:': '👨‍⚖️', ':police_officer:': '👮',
+    ':detective:': '🕵️', ':guard:': '💂', ':ninja:': '🥷', ':student:': '👩‍🎓',
+    ':teacher:': '👩‍🏫', ':office_worker:': '👩‍💼', ':technologist:': '👩‍',
+    ':singer:': '👩‍🎤', ':actor:': '🧑‍', ':dancer:': '💃', ':person_in_tuxedo:': '🤵',
+    ':person_with_veil:': '👰', ':princess:': '👸', ':prince:': '🤴',
+    ':superhero:': '🦸', ':supervillain:': '🦹', ':mage:': '🧙',
+    ':fairy:': '🧚', ':vampire:': '🧛', ':merperson:': '🧜', ':elf:': '🧝',
+    ':genie:': '🧞', ':zombie:': '🧟', ':troll:': '🧌', ':baby:': '👶',
+    ':child:': '🧒', ':boy:': '👦', ':girl:': '👧', ':adult:': '🧑',
+    ':man:': '👨', ':woman:': '👩', ':older_adult:': '🧓', ':old_man:': '👴',
+    ':old_woman:': '👵', ':family:': '👨‍👩‍👧', ':couple:': '👫',
+    ':couple_with_heart:': '💑', ':couplekiss:': '💏', ':dog:': '🐕',
+    ':cat:': '🐈', ':mouse:': '🐁', ':hamster:': '🐹', ':rabbit:': '🐇',
+    ':fox:': '🦊', ':bear:': '🐻', ':panda:': '🐼', ':koala:': '🐨',
+    ':tiger:': '🐅', ':lion:': '🦁', ':cow:': '🐄', ':pig:': '🐖',
+    ':frog:': '🐸', ':monkey:': '🐒', ':chicken:': '🐔', ':penguin:': '🐧',
+    ':bird:': '🐦', ':baby_chick:': '🐤', ':hatching_chick:': '🐣',
+    ':hatched_chick:': '🐥', ':duck:': '🦆', ':eagle:': '🦅', ':owl:': '🦉',
+    ':bat:': '🦇', ':wolf:': '🐺', ':boar:': '🐗', ':horse:': '🐎',
+    ':unicorn:': '🦄', ':bee:': '🐝', ':bug:': '🐛', ':butterfly:': '🦋',
+    ':snail:': '🐌', ':shell:': '🐚', ':beetle:': '🐞', ':ant:': '🐜',
+    ':spider:': '️', ':scorpion:': '🦂', ':crab:': '🦀', ':snake:': '🐍',
+    ':lizard:': '🦎', ':t-rex:': '🦖', ':sauropod:': '🦕', ':turtle:': '🐢',
+    ':fish:': '🐟', ':blowfish:': '🐡', ':dolphin:': '🐬', ':whale:': '🐋',
+    ':whale2:': '🐳', ':shark:': '🦈', ':octopus:': '🐙', ':coral:': '🪸',
+    ':shrimp:': '🦐', ':squid:': '🦑', ':lobster:': '🦞', ':oyster:': '🦪',
+    ':seal:': '🦭', ':crocodile:': '🐊', ':tiger2:': '🐅', ':leopard:': '🐆',
+    ':zebra:': '🦓', ':gorilla:': '🦍', ':orangutan:': '🦧', ':elephant:': '🐘',
+    ':mammoth:': '🦣', ':hippopotamus:': '🦛', ':rhinoceros:': '🦏',
+    ':dromedary_camel:': '🐪', ':camel:': '🐫', ':giraffe:': '🦒',
+    ':kangaroo:': '🦘', ':badger:': '🦡', ':swan:': '🦢', ':peacock:': '🦚',
+    ':parrot:': '🦜', ':flamingo:': '🦩', ':dove:': '🕊️', ':poodle:': '🐩',
+    ':cat2:': '🐈', ':rooster:': '🐓', ':turkey:': '🦃', ':dodo:': '🦤',
+    ':penguin:': '🐧', ':feather:': '🪶', ':bone:': '🦴', ':blood:': '🩸',
+    ':microbe:': '🦠', ':pill:': '💊', ':apple:': '🍎', ':green_apple:': '🍏',
+    ':pear:': '🍐', ':tangerine:': '🍊', ':lemon:': '🍋', ':banana:': '🍌',
+    ':watermelon:': '🍉', ':grapes:': '🍇', ':strawberry:': '🍓',
+    ':blueberries:': '🫐', ':melon:': '🍈', ':cherries:': '🍒', ':peach:': '🍑',
+    ':mango:': '🥭', ':pineapple:': '🍍', ':coconut:': '🥥', ':kiwi:': '🥝',
+    ':tomato:': '🍅', ':eggplant:': '🍆', ':avocado:': '🥑', ':broccoli:': '🥦',
+    ':leafy_green:': '🥬', ':herb:': '🌿', ':garlic:': '🧄', ':onion:': '🧅',
+    ':mushroom:': '🍄', ':peanuts:': '🥜', ':chestnut:': '🌰', ':bread:': '🍞',
+    ':croissant:': '🥐', ':baguette_bread:': '🥖', ':flatbread:': '🫓',
+    ':pretzel:': '🥨', ':bagel:': '🥯', ':pancakes:': '🥞', ':waffle:': '🧇',
+    ':cheese:': '🧀', ':meat_on_bone:': '🍖', ':poultry_leg:': '🍗',
+    ':cut_of_meat:': '🥩', ':bacon:': '🥓', ':hamburger:': '🍔', ':fries:': '🍟',
+    ':pizza:': '🍕', ':hotdog:': '🌭', ':sandwich:': '🥪', ':taco:': '🌮',
+    ':burrito:': '🌯', ':tamale:': '🫔', ':stuffed_flatbread:': '🥙',
+    ':falafel:': '🧆', ':egg:': '🥚', ':fried_egg:': '🍳', ':shallow_pan_of_food:': '🥘',
+    ':stew:': '🍲', ':fondue:': '🫕', ':bowl_with_spoon:': '🥣',
+    ':green_salad:': '🥗', ':popcorn:': '🍿', ':butter:': '🧈', ':salt:': '🧂',
+    ':canned_food:': '🥫', ':bento:': '🍱', ':rice_cracker:': '🍘',
+    ':rice_ball:': '🍙', ':rice:': '🍚', ':curry:': '🍛', ':ramen:': '🍜',
+    ':spaghetti:': '🍝', ':sweet_potato:': '🍠', ':oden:': '🍢',
+    ':sushi:': '🍣', ':fried_shrimp:': '🍤', ':fish_cake:': '🍥',
+    ':moon_cake:': '🥮', ':dango:': '🍡', ':dumpling:': '🥟', ':fortune_cookie:': '🥠',
+    ':takeout_box:': '🥡', ':crab:': '🦀', ':lobster:': '🦞', ':shrimp:': '🦐',
+    ':squid:': '🦑', ':oyster:': '🦪', ':icecream:': '🍦', ':shaved_ice:': '🍧',
+    ':ice_cream:': '🍨', ':doughnut:': '🍩', ':cookie:': '🍪', ':birthday:': '🎂',
+    ':cake:': '🍰', ':cupcake:': '🧁', ':pie:': '🥧', ':chocolate_bar:': '🍫',
+    ':candy:': '🍬', ':lollipop:': '🍭', ':custard:': '🍮', ':honey_pot:': '🍯',
+    ':baby_bottle:': '🍼', ':milk_glass:': '🥛', ':coffee:': '☕',
+    ':tea:': '🍵', ':mate:': '🧉', ':cup_with_straw:': '🥤', ':bubble_tea:': '🧋',
+    ':sake:': '🍶', ':beer:': '🍺', ':beers:': '🍻', ':champagne_glass:': '🥂',
+    ':wine_glass:': '🍷', ':tumbler_glass:': '🥃', ':cocktail:': '🍸',
+    ':tropical_drink:': '🍹', ':champagne:': '🍾', ':ice_cube:': '🧊',
+    ':spoon:': '🥄', ':fork_and_knife:': '🍴', ':fork_knife_plate:': '🍽️',
+    ':bowl_with_spoon:': '🥣', ':takeout_box:': '🥡', ':chopsticks:': '🥢',
+    ':earth_africa:': '🌍', ':earth_americas:': '🌎', ':earth_asia:': '🌏',
+    ':globe_with_meridians:': '🌐', ':world_map:': '🗺️', ':map:': '🗺️',
+    ':compass:': '🧭', ':mountain_snow:': '🏔️', ':mountain:': '⛰️',
+    ':volcano:': '🌋', ':mount_fuji:': '🗻', ':camping:': '🏕️',
+    ':beach_umbrella:': '🏖️', ':desert:': '🏜️', ':desert_island:': '🏝️',
+    ':national_park:': '🏞️', ':stadium:': '🏟️', ':classical_building:': '🏛️',
+    ':building_construction:': '🏗️', ':bricks:': '🧱', ':rock:': '🪨',
+    ':wood:': '🪵', ':hut:': '🛖', ':houses:': '🏘️', ':derelict_house:': '🏚️',
+    ':house:': '🏠', ':house_with_garden:': '🏡', ':office:': '🏢',
+    ':post_office:': '🏣', ':european_post_office:': '🏤', ':hospital:': '🏥',
+    ':bank:': '🏦', ':hotel:': '🏨', ':love_hotel:': '🏩', ':convenience_store:': '🏪',
+    ':school:': '🏫', ':department_store:': '🏬', ':factory:': '🏭',
+    ':japanese_castle:': '🏯', ':european_castle:': '🏰', ':wedding:': '💒',
+    ':tokyo_tower:': '🗼', ':statue_of_liberty:': '🗽', ':sunrise:': '🌅',
+    ':sunrise_over_mountains:': '🌄', ':city_sunrise:': '🌇', ':city_dusk:': '🌆',
+    ':night_with_stars:': '🌃', ':sparkler:': '🎇', ':fireworks:': '🎆',
+    ':milky_way:': '🌌', ':bridge_at_night:': '🌉', ':carousel_horse:': '🎠',
+    ':ferris_wheel:': '🎡', ':roller_coaster:': '🎢', ':barber:': '💈',
+    ':circus_tent:': '🎪', ':performing_arts:': '🎭', ':round_pushpin:': '📍',
+    ':triangular_flag_on_post:': '🚩', ':crossed_flags:': '🎌',
+    ':black_flag:': '🏴', ':white_flag:': '🏳️', ':rainbow_flag:': '🏳️‍🌈',
+    ':transgender_flag:': '🏳️‍⚧️', ':checkered_flag:': '🏁', ':pineapple:': '🍍',
+    ':red_car:': '🚗', ':taxi:': '🚕', ':blue_car:': '🚙', ':bus:': '🚌',
+    ':trolleybus:': '🚎', ':race_car:': '🏎️', ':police_car:': '🚓',
+    ':ambulance:': '🚑', ':fire_engine:': '🚒', ':minibus:': '🚐',
+    ':truck:': '🚚', ':articulated_lorry:': '🚛', ':tractor:': '🚜',
+    ':motorcycle:': '🏍️', ':bike:': '🚲', ':scooter:': '🛴',
+    ':motor_scooter:': '🛵', ':busstop:': '🚏', ':motorway:': '🛣️',
+    ':railway_track:': '🛤️', ':fuelpump:': '⛽', ':construction:': '🚧',
+    ':anchor:': '⚓', ':sailboat:': '⛵', ':canoe:': '🛶', ':speedboat:': '🚤',
+    ':passenger_ship:': '🛳️', ':ferry:': '⛴️', ':motor_boat:': '🛥️',
+    ':ship:': '🚢', ':airplane:': '✈️', ':small_airplane:': '🛩️',
+    ':airplane_departure:': '🛫', ':airplane_arriving:': '🛬',
+    ':parachute:': '🪂', ':seat:': '💺', ':helicopter:': '🚁',
+    ':suspension_railway:': '🚟', ':mountain_cableway:': '🚠',
+    ':aerial_tramway:': '🚡', ':satellite:': '🛰️', ':rocket:': '🚀',
+    ':flying_saucer:': '🛸', ':bellhop_bell:': '🛎️', ':door:': '🚪',
+    ':elevator:': '🛗', ':bed:': '🛏️', ':couch_and_lamp:': '🛋️',
+    ':toilet:': '🚽', ':shower:': '🚿', ':bathtub:': '🛁', ':broom:': '🧹',
+    ':basket:': '🧺', ':roll_of_paper:': '🧻', ':soap:': '🧼',
+    ':sponge:': '🧽', ':fire_extinguisher:': '🧯', ':shopping_cart:': '🛒',
+    ':shopping_bags:': '🛍️', ':gift:': '🎁', ':balloon:': '🎈',
+    ':flags:': '🎏', ':ribbon:': '🎀', ':confetti_ball:': '🎊',
+    ':tada:': '🎉', ':dolls:': '🎎', ':izakaya_lantern:': '🏮',
+    ':wind_chime:': '🎐', ':envelope_with_arrow:': '📩',
+    ':love_letter:': '💌', ':inbox_tray:': '📥', ':outbox_tray:': '📤',
+    ':briefcase:': '💼', ':file_folder:': '📁', ':open_file_folder:': '📂',
+    ':spiral_note_pad:': '🗒️', ':spiral_calendar:': '🗓️', ':card_index:': '📇',
+    ':chart_with_upwards_trend:': '📈', ':chart_with_downwards_trend:': '📉',
+    ':bar_chart:': '📊', ':clipboard:': '📋', ':pushpin:': '📌',
+    ':round_pushpin:': '📍', ':paperclip:': '📎', ':straight_ruler:': '📏',
+    ':triangular_ruler:': '📐', ':scissors:': '✂️', ':pen:': '🖊️',
+    ':fountain_pen:': '🖋️', ':paintbrush:': '🖌️', ':crayon:': '🖍️',
+    ':memo:': '📝', ':pencil:': '✏️', ':black_nib:': '✒️',
+    ':lock_with_ink_pen:': '🔏', ':closed_lock_with_key:': '🔐', ':lock:': '🔒',
+    ':unlock:': '🔓', ':heart:': '❤️', ':yellow_heart:': '💛',
+    ':green_heart:': '💚', ':blue_heart:': '💙', ':purple_heart:': '💜',
+    ':black_heart:': '🖤', ':broken_heart:': '💔', ':two_hearts:': '💕',
+    ':revolving_hearts:': '💞', ':heartbeat:': '💓', ':heartpulse:': '💗',
+    ':sparkling_heart:': '💖', ':cupid:': '💘', ':gift_heart:': '💝',
+    ':heart_decoration:': '💟', ':peace_symbol:': '☮️',
+    ':latin_cross:': '✝️', ':star_and_crescent:': '☪️', ':om:': '🕉️',
+    ':wheel_of_dharma:': '☸️', ':six_pointed_star:': '🔯', ':menorah:': '🕎',
+    ':yin_yang:': '☯️', ':orthodox_cross:': '☦️', ':place_of_worship:': '🛐',
+    ':atom_symbol:': '⚛️', ':transgender_symbol:': '⚧️',
+    ':female_sign:': '♀️', ':male_sign:': '♂️', ':medical_symbol:': '⚕️',
+    ':infinity:': '♾️', ':recycling_symbol:': '♻️', ':fleur_de_lis:': '⚜️',
+    ':trident:': '🔱', ':name_badge:': '📛', ':beginner:': '🔰', ':o:': '⭕',
+    ':white_check_mark:': '✅', ':heavy_check_mark:': '✔️', ':x:': '❌',
+    ':negative_squared_cross_mark:': '❎', ':curly_loop:': '➰', ':loop:': '➿',
+    ':part_alternation_mark:': '〽️', ':eight_spoked_asterisk:': '✳️',
+    ':eight_pointed_black_star:': '✴️', ':sparkle:': '❇️', ':copyright:': '©️',
+    ':registered:': '®️', ':tm:': '™️'
   };
 
   let originalContent = ''; // 用于存储文件打开时的原始内容，支持“重置”功能
@@ -220,6 +462,12 @@ import DOMPurify from 'dompurify';
     const contentType = document.contentType;
     if (contentType && (contentType.includes('text/markdown') || contentType.includes('text/x-markdown'))) return true;
 
+    // 【优先】兼容开发模式：如果存在 raw-md 元素且有内容，直接视为 Markdown
+    const rawMd = document.getElementById('raw-md');
+    if (rawMd && rawMd.textContent.trim().length > 0) {
+        return true;
+    }
+
     // 3. 【新增】排除已知非 Markdown 文件扩展名
     const extMatch = pathname.match(/\.([a-zA-Z0-9]+)$/);
     if (extMatch) {
@@ -239,13 +487,7 @@ import DOMPurify from 'dompurify';
 
     // 5. 【保留】兼容本地测试：如果 body 下有非空的 pre 标签（排除 raw-md）且没有插件 UI，也视为 md 文件
     const bodyPre = document.querySelector('body > pre');
-    if (bodyPre && bodyPre.id !== 'raw-md' && bodyPre.textContent.trim().length > 0 && !document.getElementById('md-viewer-toolbar')) {
-        return true;
-    }
-
-    // 6. 【保留】兼容开发模式：如果存在 raw-md 元素且有内容
-    const rawMd = document.getElementById('raw-md');
-    if (rawMd && rawMd.textContent.trim().length > 0) {
+    if (bodyPre && bodyPre.id !== 'raw-md' && bodyPre.textContent.trim().length > 0 && !document.getElementById('md-viewer-header')) {
         return true;
     }
 
@@ -258,6 +500,11 @@ import DOMPurify from 'dompurify';
    * @returns {string}
    */
   function getRawText() {
+    // 如果有外部传入的内容（如最近文件切换），优先使用
+    if (window.__mdRawContent) {
+      return window.__mdRawContent;
+    }
+
     // 开发模式下优先使用 raw-md 元素
     const rawMd = document.getElementById('raw-md');
     if (rawMd) return rawMd.textContent;
@@ -279,12 +526,38 @@ import DOMPurify from 'dompurify';
   async function parseMarkdown(text) {
     try {
       // 第一步：将 Markdown 转换为 HTML 并进行安全过滤
-      const rawHtml = marked.parse(text);
+      const rawHtml = await marked.parse(text);
       const cleanHtml = DOMPurify.sanitize(rawHtml);
       
       // 第二步：创建临时 DOM 容器以便操作节点
       const tempDiv = document.createElement('div');
       tempDiv.innerHTML = cleanHtml;
+
+      // 2.5 Emoji 短代码替换（排除 code、pre 等标签内部）
+      if (CONFIG.enableEmoji) {
+        const walker = document.createTreeWalker(tempDiv, NodeFilter.SHOW_TEXT, {
+          acceptNode: (node) => {
+            const parent = node.parentElement;
+            if (parent && (parent.tagName === 'CODE' || parent.tagName === 'PRE' || parent.closest('code, pre'))) {
+              return NodeFilter.FILTER_REJECT;
+            }
+            return NodeFilter.FILTER_ACCEPT;
+          }
+        });
+        const textNodes = [];
+        let node;
+        while ((node = walker.nextNode()) !== null) {
+          textNodes.push(node);
+        }
+        textNodes.forEach(node => {
+          const newText = node.textContent.replace(/:[a-zA-Z0-9_+-]+:/g, match => {
+            return EMOJI_MAP[match] || match;
+          });
+          if (newText !== node.textContent) {
+            node.textContent = newText;
+          }
+        });
+      }
       
       // 第三步：如果启用了 Mermaid，查找并渲染代码块
       if (CONFIG.enableMermaid) {
@@ -392,13 +665,23 @@ import DOMPurify from 'dompurify';
         }
         
       }
-      // 2. 处理数学公式 (KaTeX)
+      // 2. 处理外部链接：为所有外部链接添加 target="_blank" 和 rel="noopener noreferrer"
+      const links = tempDiv.querySelectorAll('a');
+      links.forEach(link => {
+        const href = link.getAttribute('href');
+        if (href && (href.startsWith('http://') || href.startsWith('https://'))) {
+          link.setAttribute('target', '_blank');
+          link.setAttribute('rel', 'noopener noreferrer');
+        }
+      });
+
+      // 3. 处理数学公式 (KaTeX)
       if (CONFIG.enableMath) {
         // 确保 KaTeX 已加载
         if (!katexLoaded) {
           await loadKaTeX();
         }
-        
+
         // 使用 KaTeX 的 auto-render 扩展自动查找 $...$ 和 $$...$$
         if (typeof window.renderMathInElement === 'function') {
           window.renderMathInElement(tempDiv, {
@@ -411,9 +694,15 @@ import DOMPurify from 'dompurify';
             throwOnError: false
           });
         }
-        
+
       }
-      
+
+      // 4. 图片懒加载：为所有图片添加 loading="lazy"
+      const images = tempDiv.querySelectorAll('img');
+      images.forEach(img => {
+        img.setAttribute('loading', 'lazy');
+      });
+
       return tempDiv.innerHTML;
     } catch (error) {
       console.error('Parsing error:', error);
@@ -437,14 +726,19 @@ import DOMPurify from 'dompurify';
     
     if (headers.length === 0) return '';
 
-    let tocHtml = '<div class="md-toc"><h3>📑 目录</h3><ul>';
+    let tocHtml = '<div class="md-toc"><div class="md-toc-header"><h3>📑 目录</h3><button class="md-toc-toggle" title="收起/展开目录" type="button">◀</button></div><ul>';
     headers.forEach((header, index) => {
       // 【关键修复】直接在真实的 DOM 元素上设置 ID
       const id = `heading-${index}`;
       // 【关键】设置 id 前保存滚动位置，防止浏览器因 hash 匹配自动滚动
-      const savedScrollTop = window.scrollY;
+      const contentAreaScroll = document.getElementById('md-content-area');
+      const savedScrollTop = contentAreaScroll ? contentAreaScroll.scrollTop : window.scrollY;
       header.id = id;
-      window.scrollTo(0, savedScrollTop); 
+      if (contentAreaScroll) {
+        contentAreaScroll.scrollTo({ top: savedScrollTop });
+      } else {
+        window.scrollTo(0, savedScrollTop);
+      } 
       
       // 【关键】建立映射：去除首尾空格后的文本 -> 新 ID
       const text = header.textContent.trim();
@@ -510,13 +804,15 @@ import DOMPurify from 'dompurify';
   function createUI() {
     // 1. 顶部工具栏
     const toolbar = document.createElement('div');
-    toolbar.id = 'md-viewer-toolbar';
+    toolbar.id = 'md-viewer-header';
     
     let buttonsHtml = `
       <button id="md-toggle-btn" class="md-btn active">👁️ 预览</button>
       <button id="md-copy-btn" class="md-btn">📋 复制</button>
       <button id="md-download-btn" class="md-btn">💾 下载</button>
       <button id="md-theme-btn" class="md-btn">🌙 暗色</button>
+      <button id="md-fullscreen-btn" class="md-btn">⛶ 全屏</button>
+      <button id="md-more-btn" class="md-btn">📑 更多 </button>
     `;
 
     // 如果开启了编辑器功能，添加编辑和重置按钮
@@ -530,15 +826,16 @@ import DOMPurify from 'dompurify';
         ${buttonsHtml}
         <span class="md-file-name" id="md-file-name"></span>
       </div>
+      <div class="md-reading-progress"><div class="md-reading-progress-bar" id="md-reading-progress-bar"></div></div>
     `;
 
     // 2. 主容器（采用 Flex 布局：左侧 TOC + 右侧内容）
     const mainContainer = document.createElement('div');
-    mainContainer.id = 'md-main-container';
+    mainContainer.id = 'md-viewer-main';
     
     // 左侧目录侧边栏
     const tocContainer = document.createElement('div');
-    tocContainer.id = 'md-toc-sidebar';
+    tocContainer.id = 'md-viewer-toc';
     
     // 右侧内容区域
     const contentArea = document.createElement('div');
@@ -565,13 +862,56 @@ import DOMPurify from 'dompurify';
     contentArea.appendChild(loadingOverlay);
     contentArea.appendChild(previewContainer);
     contentArea.appendChild(editorContainer);
-    
+
     mainContainer.appendChild(tocContainer);
     mainContainer.appendChild(contentArea);
 
-    // 将 UI 插入到 body 最前方
+    // 3. 底部信息栏（Footer）
+    const footerContainer = document.createElement('div');
+    footerContainer.id = 'md-viewer-footer';
+    footerContainer.className = 'md-footer-container';
+    footerContainer.innerHTML = `
+      <div class="md-footer-left">
+        <span>MD Viewer</span>
+      </div>
+      <div class="md-footer-right">
+        <span id="md-word-count">0</span> 字 | <span id="md-reading-time">0</span> 分钟阅读
+      </div>
+    `;
+
+    // 将 UI 插入到 body 中
     document.body.insertBefore(toolbar, document.body.firstChild);
     document.body.insertBefore(mainContainer, document.body.firstChild.nextSibling);
+    document.body.appendChild(footerContainer);
+
+    // 更多菜单
+    const moreMenu = document.createElement('div');
+    moreMenu.id = 'md-more-menu';
+    moreMenu.className = 'md-more-menu';
+    moreMenu.innerHTML = `
+      <div class="md-more-item" data-action="screenshot-auto">
+        <span class="md-more-item-label">📷 自动截图</span>
+        <span class="md-more-item-shortcut"></span>
+      </div>
+      <div class="md-more-item" data-action="screenshot-manual">
+        <span class="md-more-item-label">✂️ 手动截图</span>
+        <span class="md-more-item-shortcut"></span>
+      </div>
+      <div class="md-more-item" data-action="search">
+        <span class="md-more-item-label">🔍 搜索</span>
+        <span class="md-more-item-shortcut">Ctrl+F</span>
+      </div>
+      <div class="md-more-item" data-action="shortcuts">
+        <span class="md-more-item-label">⌨️ 快捷键</span>
+        <span class="md-more-item-shortcut"></span>
+      </div>
+      <div class="md-more-item md-more-submenu-trigger" data-action="recent">
+        <span class="md-more-item-label">📁 最近文件</span>
+        <span class="md-more-item-arrow">▶</span>
+        <div class="md-more-submenu" id="md-recent-submenu"></div>
+      </div>
+    `;
+    document.body.appendChild(moreMenu);
 
     return { toolbar, tocContainer, previewContainer, editorContainer, loadingOverlay };
   }
@@ -585,13 +925,22 @@ import DOMPurify from 'dompurify';
     if (!isMarkdownFile()) return;
 
     // 【关键】页面渲染前强制回到顶部，防止浏览器基于原始内容恢复滚动位置
-    window.scrollTo(0, 0);
+    const contentAreaTop = document.getElementById('md-content-area');
+    if (contentAreaTop) {
+      contentAreaTop.scrollTo({ top: 0 });
+    } else {
+      window.scrollTo(0, 0);
+    }
 
     // 清除已有 UI，防止重复创建（开发模式下多次加载时有用）
-    const existingToolbar = document.getElementById('md-viewer-toolbar');
-    const existingMain = document.getElementById('md-main-container');
+    const existingToolbar = document.getElementById('md-viewer-header');
+    const existingMain = document.getElementById('md-viewer-main');
+    const existingFooter = document.getElementById('md-viewer-footer');
+    const existingMoreMenu = document.getElementById('md-more-menu');
     if (existingToolbar) existingToolbar.remove();
     if (existingMain) existingMain.remove();
+    if (existingFooter) existingFooter.remove();
+    if (existingMoreMenu) existingMoreMenu.remove();
 
     console.log('MD Viewer: Markdown file detected.');
 
@@ -613,7 +962,7 @@ import DOMPurify from 'dompurify';
     window.__mdRawContent = rawText;
     
     // 【修改】处理中文文件名乱码：先获取路径，再解码
-    let fileName = window.location.pathname.split('/').pop() || 'untitled.md';
+    let fileName = window.__mdFileName || window.location.pathname.split('/').pop() || 'untitled.md';
     try {
       fileName = decodeURIComponent(fileName);
     } catch (e) {
@@ -626,6 +975,11 @@ import DOMPurify from 'dompurify';
     
     // 设置文件名显示
     document.getElementById('md-file-name').textContent = window.__mdFileName;
+    // 保存到最近文件列表
+    // 开发模式下使用文件名作为 path，避免所有文件共享同一个 window.location.href
+    const isDevMode = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+    const filePath = isDevMode ? window.__mdFileName : window.location.href;
+    addRecentFile(filePath, window.__mdFileName, window.__mdRawContent);
     editorContainer.value = rawText;
 
     // 执行首次渲染
@@ -634,6 +988,8 @@ import DOMPurify from 'dompurify';
       previewContainer.innerHTML = html;
       addCodeCopyButtons(previewContainer);
       addTableActions(previewContainer);
+      applyHighlighting(previewContainer);
+      initImageLightbox(previewContainer);
     } finally {
       // 渲染完成后隐藏 loading（无论成功或失败）
       if (loadingOverlay) loadingOverlay.classList.add('hidden');
@@ -664,16 +1020,14 @@ import DOMPurify from 'dompurify';
           if (targetEl) {
             // 保存当前选中目录，刷新后恢复位置
             sessionStorage.setItem('md-viewer-last-heading', targetId);
-            // 方式一 滚动到指定元素
-            targetEl.scrollIntoView({ behavior: 'smooth' });
-            // 方式二 获取元素位置并减去工具栏高度（解决滚动位置偏移）
-            // const elementPosition = targetEl.getBoundingClientRect().top;
-            // const offsetPosition = elementPosition + window.pageYOffset - 80;
-
-            // window.scrollTo({
-            //   top: offsetPosition,
-            //   behavior: "smooth"
-            // });
+            // 滚动到指定元素
+            const contentArea = document.getElementById('md-content-area');
+            if (contentArea) {
+              const offsetTop = targetEl.offsetTop - 70;
+              contentArea.scrollTo({ top: offsetTop, behavior: 'smooth' });
+            } else {
+              targetEl.scrollIntoView({ behavior: 'smooth' });
+            }
           }
           
           // 延迟清除标志位（等待平滑滚动完成）
@@ -687,17 +1041,32 @@ import DOMPurify from 'dompurify';
     // 绑定交互事件
     bindEvents(previewContainer, editorContainer, rawText);
 
+    // 初始化搜索功能和回到顶部按钮
+    initSearchBox();
+    initScrollTopButton();
+
+    // 更新字数统计
+    updateWordCount(rawText);
+
     // 恢复上次浏览位置（页面加载时瞬间跳转，不使用动画）
+    const contentArea = document.getElementById('md-content-area');
     const savedHeadingId = sessionStorage.getItem('md-viewer-last-heading');
     if (savedHeadingId) {
       const targetEl = document.getElementById(savedHeadingId);
-      if (targetEl) {
+      if (targetEl && contentArea) {
+        const offsetTop = targetEl.offsetTop - 70;
+        contentArea.scrollTo({ top: offsetTop, behavior: 'auto' });
+      } else if (targetEl) {
         targetEl.scrollIntoView({ behavior: 'auto', block: 'start' });
       }
       sessionStorage.removeItem('md-viewer-last-heading');
     } else {
       // 没有记录时回到顶部（防止浏览器基于原始内容恢复到底部）
-      window.scrollTo(0, 0);
+      if (contentArea) {
+        contentArea.scrollTo({ top: 0, behavior: 'auto' });
+      } else {
+        window.scrollTo(0, 0);
+      }
     }
 
     // 隐藏浏览器默认的原始内容显示
@@ -787,6 +1156,16 @@ import DOMPurify from 'dompurify';
       btn.type = 'button';
       actions.appendChild(btn);
 
+      // 代码块折叠按钮（超过 15 行显示）
+      const lineCount = rawCodeText.split('\n').length;
+      if (lineCount > 15) {
+        const foldBtn = document.createElement('button');
+        foldBtn.className = 'md-code-fold-btn';
+        foldBtn.textContent = '展开';
+        foldBtn.type = 'button';
+        actions.appendChild(foldBtn);
+      }
+
       header.appendChild(actions);
       wrapper.insertBefore(header, pre);
 
@@ -796,6 +1175,15 @@ import DOMPurify from 'dompurify';
       sourceArea.value = mdSource;
       sourceArea.readOnly = true;
       wrapper.appendChild(sourceArea);
+
+      // 代码块折叠遮罩（超过 15 行时添加）
+      if (lineCount > 15) {
+        const foldOverlay = document.createElement('div');
+        foldOverlay.className = 'md-code-fold-overlay';
+        wrapper.appendChild(foldOverlay);
+        pre.style.maxHeight = '300px';
+        pre.style.overflow = 'hidden';
+      }
     });
   }
 
@@ -1041,6 +1429,283 @@ import DOMPurify from 'dompurify';
   }
 
   // ==========================================
+  // 3.5 新增功能辅助函数
+  // ==========================================
+
+  /**
+   * HTML 转义函数
+   * @param {string} unsafe - 原始字符串
+   * @returns {string} 转义后的字符串
+   */
+  function escapeHtml(unsafe) {
+    return unsafe
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#039;');
+  }
+
+  /**
+   * 为代码块应用语法高亮（使用 highlight.js）
+   * @param {HTMLElement} container - 包含代码块的容器
+   */
+  function applyHighlighting(container) {
+    if (!CONFIG.enableHighlight) return;
+    const codeBlocks = container.querySelectorAll('pre code');
+    codeBlocks.forEach(block => {
+      // 避免重复高亮
+      if (block.classList.contains('hljs')) return;
+
+      const langMatch = block.className.match(/language-(\w+)/);
+      const lang = langMatch ? langMatch[1] : '';
+
+      if (lang && hljs.getLanguage(lang)) {
+        // 指定语言高亮
+        try {
+          const result = hljs.highlight(block.textContent, { language: lang });
+          block.innerHTML = result.value;
+          block.classList.add('hljs');
+        } catch (e) {
+          console.warn('Highlight.js error:', e);
+        }
+      } else {
+        // 自动检测语言高亮
+        try {
+          const result = hljs.highlightAuto(block.textContent);
+          block.innerHTML = result.value;
+          block.classList.add('hljs');
+        } catch (e) {
+          console.warn('Highlight.js auto error:', e);
+        }
+      }
+    });
+  }
+
+  /**
+   * 初始化图片 Lightbox 放大查看功能
+   * @param {HTMLElement} container - 包含图片的容器
+   */
+  function initImageLightbox(container) {
+    let lightbox = document.getElementById('md-lightbox-overlay');
+    if (!lightbox) {
+      lightbox = document.createElement('div');
+      lightbox.id = 'md-lightbox-overlay';
+      lightbox.className = 'md-lightbox-overlay';
+      lightbox.innerHTML = '<img src="" alt="">';
+      document.body.appendChild(lightbox);
+      lightbox.addEventListener('click', () => {
+        lightbox.classList.remove('active');
+      });
+    }
+    const lightboxImg = lightbox.querySelector('img');
+    const images = container.querySelectorAll('img');
+    images.forEach(img => {
+      img.style.cursor = 'zoom-in';
+      img.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        lightboxImg.src = img.src;
+        lightbox.classList.add('active');
+      });
+    });
+  }
+
+  /**
+   * 初始化搜索功能
+   */
+  function initSearchBox() {
+    let searchOverlay = document.getElementById('md-search-overlay');
+    if (!searchOverlay) {
+      searchOverlay = document.createElement('div');
+      searchOverlay.id = 'md-search-overlay';
+      searchOverlay.className = 'md-search-overlay';
+      searchOverlay.innerHTML = '<div class="md-search-box"><div class="md-search-input-wrapper"><input type="text" class="md-search-input" placeholder="搜索文档内容..." autocomplete="off"></div><div class="md-search-results"></div></div>';
+      document.body.appendChild(searchOverlay);
+      const input = searchOverlay.querySelector('.md-search-input');
+      const resultsContainer = searchOverlay.querySelector('.md-search-results');
+      searchOverlay.addEventListener('click', (e) => {
+        if (e.target === searchOverlay) {
+          searchOverlay.classList.remove('active');
+        }
+      });
+      searchOverlay.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') {
+          searchOverlay.classList.remove('active');
+        }
+      });
+      let searchTimer = null;
+      input.addEventListener('input', () => {
+        clearTimeout(searchTimer);
+        searchTimer = setTimeout(() => {
+          performSearch(input.value, resultsContainer);
+        }, 300);
+      });
+    }
+    document.addEventListener('keydown', (e) => {
+      if ((e.ctrlKey || e.metaKey) && e.key === 'f') {
+        e.preventDefault();
+        searchOverlay.classList.add('active');
+        setTimeout(() => {
+          searchOverlay.querySelector('.md-search-input').focus();
+        }, 50);
+      }
+    });
+  }
+
+  /**
+   * 执行搜索
+   * @param {string} query - 搜索关键词
+   * @param {HTMLElement} resultsContainer - 结果容器
+   */
+  function performSearch(query, resultsContainer) {
+    if (!query || query.length < 2) {
+      resultsContainer.innerHTML = '';
+      return;
+    }
+    const previewContainer = document.getElementById('md-preview-container');
+    if (!previewContainer) return;
+    previewContainer.querySelectorAll('.md-search-highlight').forEach(el => {
+      const parent = el.parentNode;
+      parent.insertBefore(document.createTextNode(el.textContent), el);
+      parent.removeChild(el);
+    });
+    const text = previewContainer.innerText;
+    const regex = new RegExp(escapeRegExp(query), 'gi');
+    const matches = [];
+    let match;
+    while ((match = regex.exec(text)) !== null) {
+      const before = text.substring(Math.max(0, match.index - 30), match.index);
+      const after = text.substring(match.index + query.length, Math.min(text.length, match.index + query.length + 30));
+      matches.push({ before: before, match: match[0], after: after });
+    }
+    if (matches.length === 0) {
+      resultsContainer.innerHTML = '<div style="padding: 16px; color: var(--text-color);">未找到匹配结果</div>';
+      return;
+    }
+    const walker = document.createTreeWalker(previewContainer, NodeFilter.SHOW_TEXT, null, false);
+    const textNodes = [];
+    let node;
+    while ((node = walker.nextNode()) !== null) {
+      if (node.parentElement && !node.parentElement.closest('.md-code-block, .md-mermaid-block')) {
+        textNodes.push(node);
+      }
+    }
+    let searchIndex = 0;
+    textNodes.forEach(node => {
+      const nodeText = node.textContent;
+      if (regex.test(nodeText)) {
+        regex.lastIndex = 0;
+        const span = document.createElement('span');
+        span.innerHTML = nodeText.replace(regex, () => {
+          const index = searchIndex++;
+          return `<mark class="md-search-highlight" data-search-index="${index}">$&</mark>`;
+        });
+        const parent = node.parentNode;
+        const tempDiv = document.createElement('div');
+        tempDiv.innerHTML = span.innerHTML;
+        const fragment = document.createDocumentFragment();
+        while (tempDiv.firstChild) {
+          fragment.appendChild(tempDiv.firstChild);
+        }
+        parent.replaceChild(fragment, node);
+      }
+    });
+    let html = '';
+    matches.slice(0, 20).forEach((m, index) => {
+      html += '<div class="md-search-result-item" data-search-index="' + index + '">' + escapeHtml(m.before) + '<span class="highlight">' + escapeHtml(m.match) + '</span>' + escapeHtml(m.after) + '</div>';
+    });
+    if (matches.length > 20) {
+      html += '<div style="padding: 10px 16px; color: var(--text-color);">还有 ' + (matches.length - 20) + ' 个结果...</div>';
+    }
+    resultsContainer.innerHTML = html;
+    resultsContainer.querySelectorAll('.md-search-result-item').forEach(item => {
+      item.addEventListener('click', () => {
+        const index = item.getAttribute('data-search-index');
+        const highlight = previewContainer.querySelector('.md-search-highlight[data-search-index="' + index + '"]');
+        if (highlight) {
+          highlight.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }
+        searchOverlay.classList.remove('active');
+      });
+    });
+  }
+
+  /**
+   * 转义正则表达式特殊字符
+   * @param {string} string - 原始字符串
+   * @returns {string} 转义后的字符串
+   */
+  function escapeRegExp(string) {
+    return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  }
+
+  /**
+   * 更新字数统计
+   * @param {string} text - Markdown 原始文本
+   */
+  function updateWordCount(text) {
+    const countEl = document.getElementById('md-word-count');
+    const timeEl = document.getElementById('md-reading-time');
+    if (!countEl || !timeEl) return;
+
+    // 去除 Markdown 标记后统计
+    const plainText = text
+      .replace(/#{1,6}\s/g, '')           // 去除标题标记
+      .replace(/\*\*|__|\*|_|~~|`/g, '')  // 去除粗体、斜体、删除线、行内代码
+      .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')  // 提取链接文本
+      .replace(/!\[[^\]]*\]\([^)]+\)/g, '')      // 去除图片
+      .replace(/```[\s\S]*?```/g, '')            // 去除代码块
+      .replace(/`[^`]+`/g, '')                    // 去除行内代码
+      .replace(/[\r\n\s]+/g, '');                // 去除空白
+
+    // 中文字符数
+    const chineseChars = (plainText.match(/[\u4e00-\u9fa5]/g) || []).length;
+    // 英文单词数（近似）
+    const englishWords = (plainText.match(/[a-zA-Z]+/g) || []).length;
+    // 总字数（中文字符 + 英文单词）
+    const totalWords = chineseChars + englishWords;
+
+    // 阅读时间估算（中文约 400 字/分钟，英文约 200 词/分钟）
+    const readingTime = Math.max(1, Math.ceil(totalWords / 400));
+
+    countEl.textContent = totalWords.toLocaleString();
+    timeEl.textContent = readingTime;
+  }
+
+  /**
+   * 初始化回到顶部按钮
+   */
+  function initScrollTopButton() {
+    let btn = document.getElementById('md-scroll-top-btn');
+    const contentArea = document.getElementById('md-content-area');
+    if (!btn) {
+      btn = document.createElement('button');
+      btn.id = 'md-scroll-top-btn';
+      btn.className = 'md-scroll-top-btn';
+      btn.innerHTML = '↑';
+      btn.title = '回到顶部';
+      document.body.appendChild(btn);
+      btn.addEventListener('click', () => {
+        if (contentArea) {
+          contentArea.scrollTo({ top: 0, behavior: 'smooth' });
+        } else {
+          window.scrollTo({ top: 0, behavior: 'smooth' });
+        }
+      });
+    }
+    const scrollTarget = contentArea || window;
+    scrollTarget.addEventListener('scroll', () => {
+      const scrollTop = contentArea ? contentArea.scrollTop : window.pageYOffset;
+      if (scrollTop > 300) {
+        btn.classList.add('visible');
+      } else {
+        btn.classList.remove('visible');
+      }
+    });
+  }
+
+  // ==========================================
   // 4. 事件绑定与交互逻辑
   // ==================================================
 
@@ -1052,7 +1717,88 @@ import DOMPurify from 'dompurify';
     const editBtn = document.getElementById('md-edit-btn');
     const resetBtn = document.getElementById('md-reset-btn');
     const themeBtn = document.getElementById('md-theme-btn');
-    const tocSidebar = document.getElementById('md-toc-sidebar');
+    const tocSidebar = document.getElementById('md-viewer-toc');
+
+    // --- 更多菜单逻辑 ---
+    const moreBtn = document.getElementById('md-more-btn');
+    const moreMenu = document.getElementById('md-more-menu');
+    if (moreBtn && moreMenu) {
+      moreBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const rect = moreBtn.getBoundingClientRect();
+        moreMenu.style.top = (rect.bottom + 6) + 'px';
+        moreMenu.style.left = rect.left + 'px';
+        moreMenu.classList.toggle('active');
+      });
+      document.addEventListener('click', (e) => {
+        if (!moreMenu.contains(e.target) && !moreBtn.contains(e.target)) {
+          moreMenu.classList.remove('active');
+        }
+      });
+      moreMenu.querySelectorAll('.md-more-item').forEach(item => {
+        item.addEventListener('click', (e) => {
+          e.stopPropagation();
+          const action = item.getAttribute('data-action');
+          if (action === 'screenshot-auto') {
+            takeScreenshot();
+            moreMenu.classList.remove('active');
+          } else if (action === 'screenshot-manual') {
+            takeManualScreenshot();
+            moreMenu.classList.remove('active');
+          } else if (action === 'search') {
+            const searchOverlay = document.getElementById('md-search-overlay');
+            if (searchOverlay) {
+              searchOverlay.classList.add('active');
+              setTimeout(() => searchOverlay.querySelector('.md-search-input').focus(), 50);
+            }
+            moreMenu.classList.remove('active');
+          } else if (action === 'shortcuts') {
+            showShortcutsDialog();
+            moreMenu.classList.remove('active');
+          } else if (action === 'recent') {
+            // 二级菜单由 hover 触发，点击不关闭菜单
+          }
+        });
+      });
+      // 最近文件二级菜单渲染（防止重复绑定）
+      if (!moreMenu.dataset.recentInitialized) {
+        const recentTrigger = moreMenu.querySelector('.md-more-submenu-trigger[data-action="recent"]');
+        if (recentTrigger) {
+          const recentSubmenu = recentTrigger.querySelector('#md-recent-submenu');
+          if (recentSubmenu) {
+            let hideTimer = null;
+
+            function showSubmenu() {
+              clearTimeout(hideTimer);
+              renderRecentFiles(recentSubmenu);
+              const triggerRect = recentTrigger.getBoundingClientRect();
+              recentSubmenu.style.top = triggerRect.top + 'px';
+              recentSubmenu.style.left = (triggerRect.right + 12) + 'px';
+              recentSubmenu.style.display = 'block';
+            }
+
+            function hideSubmenu() {
+              hideTimer = setTimeout(() => {
+                recentSubmenu.style.display = 'none';
+              }, 200);
+            }
+
+            // 一级菜单 hover
+            recentTrigger.addEventListener('mouseenter', showSubmenu);
+            recentTrigger.addEventListener('mouseleave', hideSubmenu);
+
+            // 二级菜单 hover（取消隐藏）
+            recentSubmenu.addEventListener('mouseenter', () => {
+              clearTimeout(hideTimer);
+            });
+            recentSubmenu.addEventListener('mouseleave', () => {
+              recentSubmenu.style.display = 'none';
+            });
+          }
+        }
+        moreMenu.dataset.recentInitialized = 'true';
+      }
+    }
 
     // --- 主题切换逻辑 ---
     if (themeBtn) {
@@ -1075,6 +1821,47 @@ import DOMPurify from 'dompurify';
           localStorage.setItem('md-viewer-theme', 'dark');
         }
       });
+    }
+
+    // --- 全屏预览模式 ---
+    const fullscreenBtn = document.getElementById('md-fullscreen-btn');
+    if (fullscreenBtn) {
+      fullscreenBtn.addEventListener('click', () => {
+        const isFullscreen = document.body.classList.contains('md-fullscreen-mode');
+        if (isFullscreen) {
+          document.body.classList.remove('md-fullscreen-mode');
+          fullscreenBtn.textContent = '⛶ 全屏';
+        } else {
+          document.body.classList.add('md-fullscreen-mode');
+          fullscreenBtn.textContent = '⛶ 退出';
+        }
+      });
+    }
+
+    // --- 目录折叠/展开 ---
+    if (tocSidebar) {
+      const tocToggleBtn = tocSidebar.querySelector('.md-toc-toggle');
+      if (tocToggleBtn) {
+        // 恢复上次折叠状态
+        const tocCollapsed = localStorage.getItem('md-viewer-toc-collapsed');
+        if (tocCollapsed === 'true') {
+          tocSidebar.classList.add('collapsed');
+          tocToggleBtn.textContent = '▶';
+        }
+
+        tocToggleBtn.addEventListener('click', () => {
+          const isCollapsed = tocSidebar.classList.contains('collapsed');
+          if (isCollapsed) {
+            tocSidebar.classList.remove('collapsed');
+            tocToggleBtn.textContent = '◀';
+            localStorage.setItem('md-viewer-toc-collapsed', 'false');
+          } else {
+            tocSidebar.classList.add('collapsed');
+            tocToggleBtn.textContent = '▶';
+            localStorage.setItem('md-viewer-toc-collapsed', 'true');
+          }
+        });
+      }
     }
 
     // --- 切换 预览/源码 模式 ---
@@ -1229,14 +2016,22 @@ import DOMPurify from 'dompurify';
           console.log('Target element:', targetEl);
           if (targetEl) {
             // 执行平滑滚动，并减去工具栏的高度 (约 60px)
-            const offsetTop = targetEl.getBoundingClientRect().top + window.pageYOffset - 70;
-            window.scrollTo({
-              top: offsetTop,
-              behavior: 'smooth'
-            });
+            const contentArea = document.getElementById('md-content-area');
+            const offsetTop = targetEl.offsetTop - 70;
+            if (contentArea) {
+              contentArea.scrollTo({
+                top: offsetTop,
+                behavior: 'smooth'
+              });
+            } else {
+              window.scrollTo({
+                top: offsetTop,
+                behavior: 'smooth'
+              });
+            }
 
             // 【新增】同步更新左侧目录的选中状态
-            const tocSidebar = document.getElementById('md-toc-sidebar');
+            const tocSidebar = document.getElementById('md-viewer-toc');
             if (tocSidebar) {
               const allLinks = tocSidebar.querySelectorAll('.toc-link');
               allLinks.forEach(l => l.classList.remove('active'));
@@ -1339,6 +2134,32 @@ import DOMPurify from 'dompurify';
             pre.style.display = 'none';
             sourceArea.style.display = 'block';
             toggleBtn.textContent = '渲染';
+          }
+        }
+      }
+
+      // --- 代码块折叠/展开功能 ---
+      const foldBtn = e.target.closest('.md-code-fold-btn');
+      if (foldBtn) {
+        e.preventDefault();
+        const wrapper = foldBtn.closest('.md-code-block');
+        if (!wrapper) return;
+        const pre = wrapper.querySelector('pre');
+        const overlay = wrapper.querySelector('.md-code-fold-overlay');
+        if (pre) {
+          const isFolded = pre.style.maxHeight === '300px';
+          if (isFolded) {
+            // 展开
+            pre.style.maxHeight = 'none';
+            pre.style.overflow = 'visible';
+            foldBtn.textContent = '收起';
+            if (overlay) overlay.style.display = 'none';
+          } else {
+            // 收起
+            pre.style.maxHeight = '300px';
+            pre.style.overflow = 'hidden';
+            foldBtn.textContent = '展开';
+            if (overlay) overlay.style.display = 'block';
           }
         }
       }
@@ -1543,6 +2364,7 @@ import DOMPurify from 'dompurify';
     // 监听右侧内容区域滚动，自动高亮当前可见的章节
     if (CONFIG.enableTOC) {
       let ticking = false;
+      const contentArea = document.getElementById('md-content-area');
       const updateActiveTOCOnScroll = () => {
         // 如果正在点击目录，跳过滚动监听，避免与点击选中状态冲突导致闪烁
         if (window.__isClickingTOC) return;
@@ -1553,12 +2375,13 @@ import DOMPurify from 'dompurify';
             
             // 找到当前在视口中最靠近顶部（且在上方）的标题
             let activeHeader = null;
-            const scrollTop = window.pageYOffset || document.documentElement.scrollTop;
+            const scrollTop = contentArea ? contentArea.scrollTop : (window.pageYOffset || document.documentElement.scrollTop);
             const offset = 80; // 工具栏高度偏移量
             
             for (let i = headers.length - 1; i >= 0; i--) {
               const header = headers[i];
-              const headerTop = header.getBoundingClientRect().top + window.pageYOffset - offset;
+              const headerOffsetTop = contentArea ? header.offsetTop : (header.getBoundingClientRect().top + window.pageYOffset);
+              const headerTop = headerOffsetTop - offset;
               if (headerTop <= scrollTop + offset) {
                 activeHeader = header;
                 break;
@@ -1571,7 +2394,7 @@ import DOMPurify from 'dompurify';
             }
             
             if (activeHeader) {
-              const tocSidebar = document.getElementById('md-toc-sidebar');
+              const tocSidebar = document.getElementById('md-viewer-toc');
               if (tocSidebar) {
                 const allLinks = tocSidebar.querySelectorAll('.toc-link');
                 allLinks.forEach(l => l.classList.remove('active'));
@@ -1596,7 +2419,27 @@ import DOMPurify from 'dompurify';
         }
       };
       
-      window.addEventListener('scroll', updateActiveTOCOnScroll);
+      const scrollTarget = contentArea || window;
+      scrollTarget.addEventListener('scroll', updateActiveTOCOnScroll);
+    }
+
+    // --- 阅读进度条 ---
+    const progressBar = document.getElementById('md-reading-progress-bar');
+    if (progressBar) {
+      const contentArea = document.getElementById('md-content-area');
+      const updateProgress = () => {
+        const scrollTarget = contentArea || window;
+        const scrollTop = contentArea ? contentArea.scrollTop : (window.scrollY || document.documentElement.scrollTop || 0);
+        const scrollHeight = contentArea ? contentArea.scrollHeight : Math.max(document.body.scrollHeight, document.documentElement.scrollHeight);
+        const clientHeight = contentArea ? contentArea.clientHeight : window.innerHeight;
+        const scrollableHeight = scrollHeight - clientHeight;
+        const progress = scrollableHeight > 0 ? (scrollTop / scrollableHeight) * 100 : 0;
+        progressBar.style.width = Math.min(100, Math.max(0, progress)) + '%';
+      };
+      const scrollTarget = contentArea || window;
+      scrollTarget.addEventListener('scroll', updateProgress);
+      // 初始更新（延迟执行，确保内容渲染完成）
+      setTimeout(updateProgress, 100);
     }
   }
 

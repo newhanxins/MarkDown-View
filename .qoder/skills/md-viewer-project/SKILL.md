@@ -18,9 +18,13 @@ md-view/
 │   ├── icons/                   # 插件图标 (16x16, 48x48, 128x128)
 │   └── libs/                    # 第三方库 (mermaid, katex, auto-render)
 ├── src/                         # 源代码目录
-│   ├── content.js               # 内容脚本 - 核心逻辑 (~1500 行)
+│   ├── content.js               # 内容脚本 - 核心逻辑 (~2400 行)
 │   ├── content.css              # 样式文件 - 支持亮/暗色主题
-│   └── dev-main.js              # 开发模式入口（测试页面用）
+│   ├── dev-main.js              # 开发模式入口（测试页面用）
+│   └── modules/                 # 功能模块（v1.3.0 新增）
+│       ├── screenshot.js        # 截图模块（自动截图 + 手动选框截图）
+│       ├── recent-files.js      # 最近文件管理模块
+│       └── shortcuts.js         # 快捷键说明弹窗模块
 ├── build-crx.js                 # .crx 打包脚本（签名生成安装包）
 ├── vite.config.js               # Vite 构建配置
 ├── index.html                   # 开发测试页面
@@ -34,6 +38,15 @@ md-view/
 ## 项目功能
 
 MD Viewer 提供以下核心功能：
+
+### v1.3.0 新增功能 (2026-10-16)
+
+- **截图功能**：支持自动截图和手动选框截图，一键保存 PNG（html2canvas 动态加载）
+- **文档搜索**：支持 Ctrl+F 快速搜索文档内容，高亮匹配并精确定位跳转
+- **最近文件**：自动记录最近打开的 Markdown 文件，支持二级菜单快速切换
+- **快捷键说明**：支持 Ctrl+/ 查看所有可用快捷键
+- **全屏 toolbar 悬停**：鼠标移入顶部自动滑出工具栏
+- **功能模块化拆分**：screenshot.js、recent-files.js、shortcuts.js
 
 ### 核心功能
 - **自动检测**：识别浏览器中打开的 `.md` 和 `.markdown` 文件
@@ -64,10 +77,28 @@ MD Viewer 提供以下核心功能：
 | marked | ^11.1.0 | Markdown 解析器 |
 | DOMPurify | ^3.0.6 | HTML 安全过滤 |
 | KaTeX | 0.16.x | 数学公式渲染 (本地) |
+| html2canvas | ^1.4.1 | 截图功能 (动态加载) |
 | Mermaid | 10.x | 图表渲染 (在线 CDN) |
 | terser | ^5.48.0 | 代码压缩 |
 
 ## 核心模块职责
+
+### modules/ 功能模块 (v1.3.0 新增)
+
+#### screenshot.js - 截图模块
+- `takeScreenshot()` - 自动截取当前预览内容并下载 PNG
+- `takeManualScreenshot()` - 手动选框截图，支持拖动选框、保存/取消/重新选择
+- `getHtml2Canvas()` - 动态加载 html2canvas 库（通过 libs/ 目录）
+- `showToast()` - 显示操作提示
+
+#### recent-files.js - 最近文件模块
+- `getRecentFiles()` - 从 localStorage 获取最近文件列表
+- `addRecentFile(path, name, content)` - 添加文件到最近列表
+- `clearRecentFiles()` - 清空最近文件
+- `renderRecentFiles(submenu)` - 渲染最近文件到二级菜单
+
+#### shortcuts.js - 快捷键模块
+- `showShortcutsDialog()` - 显示快捷键说明弹窗
 
 ### content.js 模块划分
 

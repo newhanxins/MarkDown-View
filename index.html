@@ -107,6 +107,38 @@
     }
     .demo-links a:hover { background: #e0e0e0; }
 
+    /* 最近打开文件 */
+    .recent-files {
+      margin-top: 24px;
+      padding-top: 20px;
+      border-top: 1px solid #eee;
+    }
+    .recent-files p {
+      font-size: 13px;
+      color: #888;
+      margin-bottom: 10px;
+    }
+    .recent-file-item {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin: 4px 0;
+      padding: 8px 14px;
+      background: #f8f9fa;
+      border-radius: 6px;
+      font-size: 13px;
+      color: #333;
+      cursor: pointer;
+      transition: background 0.2s;
+    }
+    .recent-file-item:hover {
+      background: #e9ecef;
+    }
+    .recent-file-time {
+      font-size: 11px;
+      color: #888;
+    }
+
     /* 全局拖拽遮罩层 */
     #drag-overlay {
       display: none;
@@ -142,9 +174,10 @@
       display: block;
     }
 
-    /* 预览模式下覆盖 body 的 flex 布局，避免影响滚动 */
+    /* 预览模式下保持 flex 布局 */
     body.preview-mode {
-      display: block;
+      display: flex;
+      flex-direction: column;
       padding: 0;
       min-height: auto;
     }
@@ -194,6 +227,11 @@
       <a data-demo="mermaid">Mermaid 图表</a>
       <a data-demo="math">数学公式</a>
       <a data-demo="full">综合示例</a>
+    </div>
+
+    <div class="recent-files" id="recent-files" style="display:none;">
+      <p>最近打开：</p>
+      <div id="recent-files-list"></div>
     </div>
   </div>
 

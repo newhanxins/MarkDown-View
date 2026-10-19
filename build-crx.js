@@ -1,16 +1,22 @@
 /**
- * Chrome 扩展 .crx 打包脚本
+ * Chrome 扩展打包脚本
  *
  * 功能说明：
- *   将 dist/ 目录打包为可直接拖拽安装到 Chrome 浏览器的 .crx 文件。
- *   遵循 Chrome 扩展签名格式（Magic + PubKey + Sig + ZipData）。
+ *   1. 将 dist/ 目录打包为 .zip 文件（用于 Chrome Web Store 上传）
+ *   2. 将 dist/ 目录打包为 .crx 文件（用于企业策略部署或旧版 Chrome）
+ *
+ * 注意：
+ *   Chrome 67+ 已禁止直接拖拽安装 .crx 文件。
+ *   开发/测试请使用"加载已解压的扩展程序"方式安装。
+ *   正式发布请通过 Chrome Web Store 上传 .zip 文件。
  *
  * 使用方法：
- *   node build-crx.js
+ *   npm run build:pack
  *
  * 输出产物：
- *   release/md-viewer-v{version}.crx  — 签名后的安装包
- *   release/key.pem                    — RSA 私钥（务必保存，复用可保持扩展 ID 不变）
+ *   release/md-viewer-v{version}.zip  - Chrome Web Store 上传包
+ *   release/md-viewer-v{version}.crx  - 企业策略部署包（需通过组策略或注册表配置）
+ *   release/key.pem                    - RSA 私钥（务必保存，复用可保持扩展 ID 不变）
  */
 import { sign, createPublicKey, createPrivateKey, generateKeyPairSync } from 'crypto';
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'fs';
@@ -27,7 +33,7 @@ const DIST_DIR = 'dist';
 /** 打包产物输出目录 */
 const OUTPUT_DIR = 'release';
 
-/** 扩展名称，用于生成 .crx 文件名前缀 */
+/** 扩展名称，用于生成文件名前缀 */
 const EXT_NAME = 'md-viewer';
 
 /** 私钥文件路径，用于签名 .crx */
@@ -70,7 +76,7 @@ function getOrCreatePrivateKey() {
 
   // 保存私钥到文件
   writeFileSync(PRIVATE_KEY_PATH, privateKey);
-  console.log(`[INFO] 已生成新的私钥: ${PRIVATE_KEY_PATH}`);
+  console.log('[INFO] 已生成新的私钥: ' + PRIVATE_KEY_PATH);
   return privateKey;
 }
 
@@ -112,41 +118,42 @@ async function zipDistToBuffer() {
 }
 
 // ========================
-// 构造 .crx 文件
+// 打包主函数
 // ========================
 
 /**
- * 构建 .crx 安装包的主函数
+ * 打包主函数
  * 
- * 构建流程：
+ * 逻辑：
  *   1. 获取或生成 RSA 私钥
- *   2. 将 dist/ 目录打包为 ZIP Buffer
- *   3. 从私钥派生对应的 DER 格式公钥
- *   4. 使用私钥对 ZIP 内容进行 SHA256 签名
- *   5. 拼接 CRX 文件头（Magic + Version + PubKeyLen + SigLen + PubKey + Sig）和 ZIP 数据
- *   6. 写入 release/md-viewer-v{version}.crx
+ *   2. 获取扩展版本号
+ *   3. 将 dist 目录压缩为 ZIP Buffer
+ *   4. 生成 .zip 文件（用于 Chrome Web Store 上传）
+ *   5. 生成 .crx 文件（用于企业策略部署）
+ * 
+ * @returns {Promise<void>}
+ * @throws {Error} 打包过程中发生的错误
  */
-async function buildCrx() {
-  // 1. 获取签名用的 RSA 私钥
+async function buildPackage() {
+  // 获取或生成 RSA 私钥
   const privateKeyPem = getOrCreatePrivateKey();
+  const versionStr = JSON.parse(readFileSync('package.json', 'utf-8')).version;
 
-  // 2. 将 dist 目录打包为 ZIP
+  // 1. 生成 ZIP 文件（Chrome Web Store 上传用）
   const zipBuffer = await zipDistToBuffer();
-  console.log(`[INFO] ZIP 大小: ${(zipBuffer.length / 1024).toFixed(2)} KB`);
+  const zipPath = join(OUTPUT_DIR, EXT_NAME + '-v' + versionStr + '.zip');
+  writeFileSync(zipPath, zipBuffer);
+  console.log('[SUCCESS] ZIP: ' + zipPath + ' (' + (zipBuffer.length / 1024).toFixed(2) + ' KB)');
 
-  // 3. 从 PEM 私钥提取 DER 格式公钥（必须与私钥对应）
-  //    createPrivateKey 读取 PEM 私钥 -> createPublicKey 派生公钥 -> export 为 DER 格式
+  // 2. 生成 CRX 文件（企业策略部署用）
   const privateKeyObj = createPrivateKey(privateKeyPem);
   const publicKeyObj = createPublicKey(privateKeyObj);
   const publicKey = publicKeyObj.export({ type: 'spki', format: 'der' });
 
-  // 4. 使用私钥对 ZIP 内容进行 SHA256 签名
+  // 使用私钥对 ZIP 内容进行 SHA256 签名
   const signature = sign('sha256', zipBuffer, privateKeyPem);
 
-  // 5. 构建 CRX 文件头（Chrome 扩展签名格式 Version 3）
-  //    格式：[Magic(4B)] [Version(4B)] [PubKeyLen(4B)] [SigLen(4B)] [PubKey] [Sig] [ZipData]
-  
-  // Magic number: "Cr24"（Chrome 扩展标识）
+  // CRX 文件头（Version 3 格式）
   const magic = Buffer.from('Cr24', 'utf8');
   // 版本号: 3（小端序 uint32）
   const version = Buffer.alloc(4);
@@ -169,19 +176,18 @@ async function buildCrx() {
     zipBuffer    // ZIP 数据（即扩展文件内容）
   ]);
 
-  // 6. 从 package.json 读取版本号，生成输出文件名
-  const versionStr = JSON.parse(readFileSync('package.json', 'utf-8')).version;
-  const outputPath = join(OUTPUT_DIR, `${EXT_NAME}-v${versionStr}.crx`);
-  
-  // 写入 .crx 文件
-  writeFileSync(outputPath, crxBuffer);
+  const crxPath = join(OUTPUT_DIR, EXT_NAME + '-v' + versionStr + '.crx');
+  writeFileSync(crxPath, crxBuffer);
+  console.log('[SUCCESS] CRX: ' + crxPath + ' (' + (crxBuffer.length / 1024).toFixed(2) + ' KB)');
 
-  console.log(`[SUCCESS] 已生成: ${outputPath}`);
-  console.log(`          文件大小: ${(crxBuffer.length / 1024).toFixed(2)} KB`);
+  console.log('\nPackage complete!');
+  console.log('  .zip  -> Upload to Chrome Web Store');
+  console.log('  .crx  -> Enterprise deployment (requires policy config)');
+  console.log('\nTip: For development, use "Load unpacked" with the dist/ folder');
 }
 
 // 执行打包
-buildCrx().catch(err => {
+buildPackage().catch(err => {
   console.error('[ERROR]', err);
   process.exit(1);
 });
