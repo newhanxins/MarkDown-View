@@ -79,25 +79,31 @@ export function renderRecentFiles(submenu) {
   const files = getRecentFiles();
   if (files.length === 0) {
     submenu.innerHTML = '<div class="md-more-submenu-empty">暂无最近文件</div>';
+    // 清空后移除旧的事件监听器
+    submenu._recentClickHandler = null;
     return;
   }
 
-  submenu.innerHTML = files.map((file, index) => {
-    const displayName = file.name || '未知文件';
-    const timeStr = formatTime(file.time);
-    return `<div class="md-more-submenu-item" data-index="${index}">
-      <span class="md-more-submenu-item-name">${escapeHtml(displayName)}</span>
-      <span class="md-more-submenu-item-time">${timeStr}</span>
-    </div>`;
-  }).join('');
+  // 检查是否已经初始化过（避免重复绑定事件）
+  if (!submenu._recentInitialized) {
+    submenu.innerHTML = files.map((file, index) => {
+      const displayName = file.name || '未知文件';
+      const timeStr = formatTime(file.time);
+      return `<div class="md-more-submenu-item" data-index="${index}">
+        <span class="md-more-submenu-item-name">${escapeHtml(displayName)}</span>
+        <span class="md-more-submenu-item-time">${timeStr}</span>
+      </div>`;
+    }).join('');
 
-  // 绑定点击事件
-  submenu.querySelectorAll('.md-more-submenu-item').forEach(item => {
-    item.addEventListener('click', (e) => {
+    // 使用事件委托，只绑定一次
+    submenu.addEventListener('click', (e) => {
+      const item = e.target.closest('.md-more-submenu-item');
+      if (!item) return;
+      
       e.stopPropagation();
       const idx = parseInt(item.getAttribute('data-index'));
-      const files = getRecentFiles();
-      const file = files[idx];
+      const currentFiles = getRecentFiles();
+      const file = currentFiles[idx];
       if (!file) return;
 
       // 如果有内容，通过 dev-main.js 的方式加载
@@ -118,7 +124,22 @@ export function renderRecentFiles(submenu) {
         window.open(file.path, '_blank');
       }
     });
-  });
+    
+    submenu._recentInitialized = true;
+  } else {
+    // 已初始化，只更新内容（保留事件监听器）
+    const items = submenu.querySelectorAll('.md-more-submenu-item');
+    files.forEach((file, index) => {
+      if (items[index]) {
+        const displayName = file.name || '未知文件';
+        const timeStr = formatTime(file.time);
+        items[index].innerHTML = `
+          <span class="md-more-submenu-item-name">${escapeHtml(displayName)}</span>
+          <span class="md-more-submenu-item-time">${timeStr}</span>
+        `;
+      }
+    });
+  }
 }
 
 /**

@@ -34,6 +34,16 @@
 - 🔢 **数学公式**：支持 KaTeX 渲染行内和块级数学公式
 - 🌓 **主题切换**：支持亮色/暗色模式一键切换，并自动记忆用户偏好
 
+### v1.4.0 新增功能
+
+- 📄 **导出 PDF**：支持将 Markdown 预览内容导出为 PDF 文件
+- 🔢 **代码块行号**：支持在代码块左侧显示行号，可通过设置开关控制
+- 📑 **目录折叠/展开**：支持折叠/展开目录节点，可通过设置开关控制
+- 💾 **自动保存草稿**：编辑时自动保存草稿到本地，下次进入编辑可恢复
+- ⚙️ **设置菜单**：新增设置弹窗，可配置代码块行号、目录折叠、自动保存等选项
+- 🔍 **图片点击放大**：支持点击图片查看大图（Lightbox）
+- 🐛 **修复插件影响其他页面滚动条的 bug**：全局样式改为 JS 动态注入，避免影响非 Markdown 页面
+
 ### v1.3.0 新增功能
 
 - 🖼️ **截图功能**：支持自动截图和手动选框截图，一键保存 PNG
@@ -113,10 +123,17 @@ md-view/
 │       ├── katex.min.css     # KaTeX 样式文件
 │       └── auto-render.min.js # KaTeX 自动渲染插件
 ├── src/                      # 源代码目录
-│   ├── content.js            # 内容脚本（核心逻辑 ~1500 行）
+│   ├── content.js            # 内容脚本（核心逻辑 ~2800 行）
 │   ├── content.css           # 样式文件（亮/暗色主题）
-│   └── dev-main.js           # 开发模式入口（测试页面用）
-├── dist/                     # Vite 构建输出目录（加载扩展时指向此目录）
+│   ├── dev-main.js           # 开发模式入口（测试页面用）
+│   └── modules/              # 功能模块（v1.3.0+ 新增）
+│       ├── screenshot.js     # 截图模块（自动截图 + 手动选框截图）
+│       ├── recent-files.js   # 最近文件管理模块
+│       ├── shortcuts.js      # 快捷键说明弹窗模块
+│       └── settings.js       # 设置管理模块（v1.4.0 新增）
+├── dist/                     # Chrome 扩展构建输出目录
+├── dist-web/                 # 网页版本（本地 file:// 协议使用）
+├── dist-web-server/          # 网页版本（服务器部署使用）
 └── release/                  # .crx 打包输出目录
     ├── key.pem               # RSA 签名私钥（务必保存好）
     └── md-viewer-v1.0.0.crx  # 可直接安装到 Chrome 的扩展包
@@ -185,6 +202,36 @@ npm run build
 ```
 
 构建完成后，会在项目根目录生成 `dist/` 文件夹，包含所有编译后的文件。
+
+### 3.1 其他构建命令
+
+```bash
+# 构建网页版本（服务器部署，输出到 dist-web-server/）
+npm run build:web
+
+# 构建网页版本（本地浏览器打开，输出到 dist-web/）
+npm run build:web:local
+
+# 仅构建扩展版本（输出到 dist/）
+npm run build:ext
+
+# 重新构建并打包 .crx（先构建扩展版本，再打包为 .crx 和 .zip）
+npm run build:crx
+
+# 一键构建并打包（先构建，再打包为 .crx 和 .zip）
+npm run build:pack
+```
+
+**构建模式说明**：
+
+| 命令 | 输出目录 | 路径类型 | 用途 |
+|------|---------|---------|------|
+| `npm run build` | `dist/` | 相对路径 `./` | Chrome 扩展 + 网页版 |
+| `npm run build:web` | `dist-web-server/` | 绝对路径 `/` | **服务器部署**（Nginx/GitHub Pages） |
+| `npm run build:web:local` | `dist-web/` | 相对路径 `./` | **本地 file:// 协议直接打开** |
+| `npm run build:ext` | `dist/` | 相对路径 `./` | 仅 Chrome 扩展 |
+
+> 📖 **详细构建文档**: 查看 [BUILD_COMMANDS.md](BUILD_COMMANDS.md) 了解完整的构建流程、技术实现和最佳实践。
 
 ### 4. 加载到 Chrome
 
@@ -504,29 +551,49 @@ bindEvents()
 
 ### 构建流程
 
+#### 扩展版本构建
+
 ```bash
-npm run build
+npm run build:ext
 ```
 
 **构建步骤**：
 
 1. Vite 读取 `vite.config.js` 配置
 2. 处理 `src/content.js` 和 `src/content.css`
-3. 复制 `public/` 目录到 `dist/`
+3. 复制 `public/` 目录到 `dist/`（包含 manifest.json）
 4. 输出最终文件到 `dist/` 目录
 
 **输出结构**：
 
 ```
 dist/
-├── manifest.json
-├── content.js
-├── content.css
-└── icons/
-    ├── icon16.png
-    ├── icon48.png
-    └── icon128.png
+├── manifest.json         # Chrome 扩展清单
+├── content.js            # 内容脚本
+├── content.css           # 样式文件
+├── main.js               # 开发测试入口
+├── icons/                # 图标
+└── libs/                 # 第三方库
 ```
+
+#### 网页版本构建
+
+**本地版本**（file:// 协议）：
+```bash
+npm run build:web:local
+# 输出到 dist-web/，CSS 使用相对路径 ./
+```
+
+**服务器版本**（HTTP 部署）：
+```bash
+npm run build:web
+# 输出到 dist-web-server/，CSS 使用绝对路径 /
+```
+
+**技术细节**：
+- `index.html` 源文件不包含 CSS 引用
+- Vite 插件 `webModeHtmlPlugin` 在构建时动态注入 CSS
+- `webModeAssetsPlugin` 精确复制 `libs/` 和 `icons/`，排除 `manifest.json`
 
 ### 发布到 Chrome Web Store
 
@@ -837,6 +904,23 @@ SOFTWARE.
 ---
 
 ## 📊 更新日志
+
+### v1.4.0 (2026-10-20)
+
+**新增功能**
+
+- 📄 **导出 PDF**：支持将 Markdown 预览内容导出为 PDF 文件
+- 🔢 **代码块行号显示**：在代码块左侧显示行号，可通过设置开关控制（默认关闭）
+- 📑 **目录折叠/展开**：支持折叠/展开目录节点，可通过设置开关控制（默认开启）
+- 💾 **自动保存草稿**：编辑时自动保存草稿到本地，下次进入编辑可恢复（默认关闭）
+- ⚙️ **设置菜单**：新增设置弹窗，可配置代码块行号、目录折叠、自动保存等选项
+- 🔍 **图片点击放大**：支持点击图片查看大图（Lightbox）
+- 🐛 **修复插件影响其他页面滚动条的 bug**：全局样式改为 JS 动态注入，避免影响非 Markdown 页面
+
+**代码结构优化**
+
+- 新增 settings.js 设置管理模块
+- 代码块行号动态对齐（继承代码块实际 line-height 和 font-size）
 
 ### v1.3.0 (2026-10-16)
 

@@ -13,22 +13,25 @@ MD Viewer 是一个基于 **Manifest V3** 的 Chrome 浏览器扩展，用于自
 
 ```
 md-view/
-├── public/                      # 静态资源目录（构建时自动复制到 dist/）
+├── public/                      # 静态资源目录（扩展版本自动复制）
 │   ├── manifest.json            # Chrome 插件清单 (Manifest V3)
 │   ├── icons/                   # 插件图标 (16x16, 48x48, 128x128)
-│   └── libs/                    # 第三方库 (mermaid, katex, auto-render)
+│   └── libs/                    # 第三方库 (mermaid, katex, html2canvas, jspdf)
 ├── src/                         # 源代码目录
-│   ├── content.js               # 内容脚本 - 核心逻辑 (~2400 行)
+│   ├── content.js               # 内容脚本 - 核心逻辑 (~2500 行)
 │   ├── content.css              # 样式文件 - 支持亮/暗色主题
 │   ├── dev-main.js              # 开发模式入口（测试页面用）
-│   └── modules/                 # 功能模块（v1.3.0 新增）
+│   └── modules/                 # 功能模块（v1.3.0+ 新增）
 │       ├── screenshot.js        # 截图模块（自动截图 + 手动选框截图）
 │       ├── recent-files.js      # 最近文件管理模块
-│       └── shortcuts.js         # 快捷键说明弹窗模块
+│       ├── shortcuts.js         # 快捷键说明弹窗模块
+│       └── settings.js          # 设置管理模块（v1.4.0 新增）
 ├── build-crx.js                 # .crx 打包脚本（签名生成安装包）
-├── vite.config.js               # Vite 构建配置
-├── index.html                   # 开发测试页面
-├── dist/                        # Vite 构建输出目录（开发加载扩展时指向此目录）
+├── vite.config.js               # Vite 构建配置（多环境支持）
+├── index.html                   # 开发测试页面（源文件，不含 CSS 引用）
+├── dist/                        # 扩展版本构建输出（含 manifest.json）
+├── dist-web/                    # 网页版本-本地（file:// 协议，相对路径）
+├── dist-web-server/             # 网页版本-服务器（HTTP 部署，绝对路径）
 ├── release/                     # .crx 打包输出目录
 │   ├── key.pem                  # RSA 签名私钥（复用保持扩展 ID 一致）
 │   └── md-viewer-v{version}.crx # 可直接安装到 Chrome 的扩展包
@@ -38,6 +41,16 @@ md-view/
 ## 项目功能
 
 MD Viewer 提供以下核心功能：
+
+### v1.4.0 新增功能 (2026-10-20)
+
+- **导出 PDF**：支持将 Markdown 预览内容导出为 PDF 文件
+- **代码块行号显示**：在代码块左侧显示行号，可通过设置开关控制（默认关闭）
+- **目录折叠/展开**：支持折叠/展开目录节点，可通过设置开关控制（默认开启）
+- **自动保存草稿**：编辑时自动保存草稿到本地，下次进入编辑可恢复（默认关闭）
+- **设置菜单**：新增设置弹窗，可配置代码块行号、目录折叠、自动保存等选项
+- **图片点击放大**：支持点击图片查看大图（Lightbox）
+- **修复全局样式污染**：全局 overflow: hidden 改为 JS 动态注入，避免影响非 Markdown 页面
 
 ### v1.3.0 新增功能 (2026-10-16)
 
@@ -100,6 +113,11 @@ MD Viewer 提供以下核心功能：
 #### shortcuts.js - 快捷键模块
 - `showShortcutsDialog()` - 显示快捷键说明弹窗
 
+#### settings.js - 设置管理模块 (v1.4.0 新增)
+- `getSettings()` - 获取所有设置
+- `getSetting(key)` - 获取单个设置项
+- `setSetting(key, value)` - 设置单个设置项
+
 ### content.js 模块划分
 
 1. **初始化配置与全局变量** (约 1-250 行)
@@ -145,10 +163,29 @@ MD Viewer 提供以下核心功能：
 
 ### vite.config.js 构建配置
 
-- 入口: `src/content.js`
-- 输出文件名固定: `content.js` / `content.css`
+**多环境构建支持**：
+
+- **扩展版本** (`npm run build:ext`)
+  - 入口: `src/content.js`
+  - 输出: `dist/` (含 manifest.json)
+  - `copyPublicDir: true` 复制整个 public 目录
+
+- **网页版本-本地** (`npm run build:web:local`)
+  - 入口: `src/dev-main.js`
+  - 输出: `dist-web/` (不含 manifest.json)
+  - CSS 路径: 相对路径 `./`
+  - `webModeHtmlPlugin` 动态注入 CSS 引用
+  - `webModeAssetsPlugin` 精确复制 libs/ 和 icons/
+
+- **网页版本-服务器** (`npm run build:web`)
+  - 入口: `src/dev-main.js`
+  - 输出: `dist-web-server/` (不含 manifest.json)
+  - CSS 路径: 绝对路径 `/`
+  - 适合部署到 Nginx/GitHub Pages
+
+**通用配置**：
 - 使用 `terser` 压缩，生产环境移除 `console`
-- `copyPublicDir: true` 确保 public 目录（含 libs）被复制到 dist
+- Banner 插件注入版本信息
 - 开发模式打开 `index.html` 测试页
 
 ## 代码规范（强制执行）
@@ -250,11 +287,38 @@ function getRawText() {
 
 ### 开发测试流程
 
-1. `npm run dev` - 启动开发服务器，访问 http://localhost:5173
-2. `npm run build` - 构建生产版本到 dist/
-3. `npm run build:pack` - 先构建生产版本，再打包为 .crx 安装包（输出到 release/）
-4. 在 Chrome 扩展管理页面加载 dist/ 目录测试
-5. 修改代码后重新构建并刷新扩展
+1. **开发模式**（热更新）
+   ```bash
+   npm run dev
+   # 访问 http://localhost:5173
+   ```
+
+2. **构建扩展版本**
+   ```bash
+   npm run build:ext
+   # 输出到 dist/，加载到 Chrome 扩展管理页面
+   ```
+
+3. **构建网页版本-本地**
+   ```bash
+   npm run build:web:local
+   # 输出到 dist-web/，双击 index.html 直接打开
+   ```
+
+4. **构建网页版本-服务器**
+   ```bash
+   npm run build:web
+   # 输出到 dist-web-server/，部署到 Nginx/GitHub Pages
+   ```
+
+5. **打包 .crx 安装包**
+   ```bash
+   npm run build:pack
+   # 先构建扩展版本，再签名打包为 .crx 和 .zip
+   # 输出到 release/
+   ```
+
+6. **修改代码后重新构建并刷新扩展**
 
 ## 依赖加载说明
 

@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "MD Viewer - Markdown Preview",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "自动检测并预览浏览器中打开的 Markdown 文件，支持源码/预览切换",
   "permissions": [
     "activeTab",
@@ -15,9 +15,11 @@
       "matches": ["<all_urls>"],
       "css": ["libs/katex.min.css", "content.css"],
       "js": [
-        "libs/mermaid.min.js", 
-        "libs/katex.min.js", 
-        "libs/auto-render.min.js", 
+        "libs/mermaid.min.js",
+        "libs/katex.min.js",
+        "libs/auto-render.min.js",
+        "libs/html2canvas.min.js",
+        "libs/jspdf.umd.min.js",
         "content.js"
       ],
       "run_at": "document_end"

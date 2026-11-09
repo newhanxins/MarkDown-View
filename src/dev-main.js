@@ -1,4 +1,7 @@
 // 开发模式入口脚本
+// 导入 content.js 以获取 __mdRenderMarkdown 等全局函数
+import './content.js';
+
 const dropZone = document.getElementById('drop-zone');
 const fileInput = document.getElementById('file-input');
 const fileNameDisplay = document.getElementById('file-name');
@@ -229,6 +232,9 @@ async function loadMarkdown(content, filename) {
     window.__mdRenderMarkdown();
   }
 }
+
+// 暴露为全局函数，供其他模块调用
+window.__mdLoadMarkdown = loadMarkdown;
 
 // 返回选择页面
 backBtn.addEventListener('click', () => {

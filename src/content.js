@@ -8,6 +8,7 @@ import hljs from 'highlight.js';
 import { takeScreenshot, takeManualScreenshot } from './modules/screenshot.js';
 import { addRecentFile, renderRecentFiles } from './modules/recent-files.js';
 import { showShortcutsDialog } from './modules/shortcuts.js';
+import { getSettings, getSetting, setSetting } from './modules/settings.js';
 
 
 (function() {
@@ -30,19 +31,53 @@ import { showShortcutsDialog } from './modules/shortcuts.js';
   // 1. 初始化配置与全局变量
   // ==========================================
 
+  // 搜索遮罩层元素（在 initSearchBox 中初始化）
+  let searchOverlay = null;
+
   /**
-   * 兼容函数：在插件环境和本地测试环境中都能获取资源路径
+   * 兼容函数：在插件环境、本地测试环境和 file:// 协议下都能获取资源路径
    * @param {string} path - 资源相对路径
    * @returns {string} 完整的资源 URL
    */
   function getAssetPath(path) {
-    // 如果是 Chrome 扩展环境
+    // Chrome 扩展环境
     if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.getURL) {
       return chrome.runtime.getURL(path);
     }
-    // 如果是本地测试环境 (Vite Dev Server)，直接返回相对路径
-    // 假设 libs 文件夹在 public 目录下，开发时 Vite 会从 public 根目录提供
+    
+    // file:// 协议环境：使用相对于当前 HTML 的路径
+    if (window.location.protocol === 'file:') {
+      const currentPath = window.location.pathname;
+      const dirPath = currentPath.substring(0, currentPath.lastIndexOf('/'));
+      return dirPath + '/' + path;
+    }
+    
+    // Vite 开发服务器环境（http://localhost）
     return '/' + path;
+  }
+  
+  // 将 getAssetPath 暴露为全局函数，供其他模块使用
+  window.__mdGetAssetPath = getAssetPath;
+
+  /**
+   * 显示 Toast 提示
+   * @param {string} message - 提示文本
+   * @param {number} duration - 显示时长（毫秒），默认 2500
+   */
+  function showToast(message, duration = 2500) {
+    let toast = document.getElementById('md-toast');
+    if (!toast) {
+      toast = document.createElement('div');
+      toast.id = 'md-toast';
+      toast.style.cssText = 'position:fixed;top:20px;left:50%;transform:translateX(-50%);padding:10px 24px;background:rgba(0,0,0,0.85);color:#fff;border-radius:6px;font-size:14px;z-index:100000;opacity:0;transition:opacity 0.3s;pointer-events:none;';
+      document.body.appendChild(toast);
+    }
+    toast.textContent = message;
+    toast.style.opacity = '1';
+    clearTimeout(toast._timer);
+    toast._timer = setTimeout(() => {
+      toast.style.opacity = '0';
+    }, duration);
   }
 
   // 库的地址配置
@@ -66,6 +101,16 @@ import { showShortcutsDialog } from './modules/shortcuts.js';
       local: getAssetPath('libs/auto-render.min.js'),
       cdn: 'https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/contrib/auto-render.min.js',
       globalVar: 'renderMathInElement'
+    },
+    html2canvas: {
+      local: getAssetPath('libs/html2canvas.min.js'),
+      cdn: 'https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js',
+      globalVar: 'html2canvas'
+    },
+    jspdf: {
+      local: getAssetPath('libs/jspdf.umd.min.js'),
+      cdn: 'https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js',
+      globalVar: 'jsPDF'
     }
   };
 
@@ -318,50 +363,89 @@ import { showShortcutsDialog } from './modules/shortcuts.js';
   // 【新增】全局映射表：存储 { "原始文本": "heading-x" }
   let headingIdMap = {};
 
+  /**
+   * 清除所有搜索高亮标记
+   */
+  function clearSearchHighlights() {
+    const previewContainer = document.getElementById('md-preview-container');
+    if (!previewContainer) return;
+    previewContainer.querySelectorAll('.md-search-highlight').forEach(el => {
+      const parent = el.parentNode;
+      parent.insertBefore(document.createTextNode(el.textContent), el);
+      parent.removeChild(el);
+    });
+  }
+
    /**
-   * 【公共函数】通用外部库加载器 (Fetch + Blob 模式，兼容 CSP)
-   * @param {string} url - 脚本或样式表的 URL (优先使用本地 chrome.runtime.getURL)
+   * 【公共函数】通用外部库加载器 (Fetch + Blob 优先，失败后回退到 <script>/<link> 标签)
+   * @param {string} url - 脚本或样式表的 URL
    * @param {boolean} isCss - 是否为 CSS 文件
    * @returns {Promise<void>}
    */
   async function loadExternalLib(url, isCss = false) {
-    return new Promise(async (resolve, reject) => {
-      try {
-        // 1. 尝试 Fetch 获取内容 (绕过 CSP 对 script-src 的限制)
-        const response = await fetch(url);
-        if (!response.ok) throw new Error(`Fetch failed: ${response.status}`);
-        
-        const content = await response.text();
-
-        if (isCss) {
-          // 2a. 处理 CSS: 创建 Style 标签
-          const style = document.createElement('style');
-          style.textContent = content;
-          document.head.appendChild(style);
-          resolve();
-        } else {
-          // 2b. 处理 JS: 创建 Blob URL 并插入 Script 标签
-          const blob = new Blob([content], { type: 'application/javascript' });
-          const blobUrl = URL.createObjectURL(blob);
-          
-          const script = document.createElement('script');
-          script.src = blobUrl;
-          
-          script.onload = () => {
-            URL.revokeObjectURL(blobUrl); // 清理内存
+    return new Promise((resolve, reject) => {
+      // 策略1: 尝试 Fetch + Blob 模式（绕过 CSP，适用于 Chrome 扩展环境）
+      fetch(url)
+        .then(response => {
+          if (!response.ok) throw new Error(`Fetch failed: ${response.status}`);
+          return response.text();
+        })
+        .then(content => {
+          if (isCss) {
+            const style = document.createElement('style');
+            style.textContent = content;
+            document.head.appendChild(style);
             resolve();
-          };
-          
-          script.onerror = (e) => {
-            URL.revokeObjectURL(blobUrl);
-            reject(new Error(`Script execution failed for ${url}`));
-          };
-          
-          document.head.appendChild(script);
-        }
-      } catch (error) {
-        console.warn(`Failed to load lib from ${url}, trying fallback if available...`, error);
-        reject(error);
+          } else {
+            const blob = new Blob([content], { type: 'application/javascript' });
+            const blobUrl = URL.createObjectURL(blob);
+            
+            const script = document.createElement('script');
+            script.src = blobUrl;
+            
+            script.onload = () => {
+              URL.revokeObjectURL(blobUrl);
+              resolve();
+            };
+            
+            script.onerror = () => {
+              URL.revokeObjectURL(blobUrl);
+              // Blob URL 失败，回退到策略2
+              loadWithScriptTag(url, isCss).then(resolve).catch(reject);
+            };
+            
+            document.head.appendChild(script);
+          }
+        })
+        .catch(error => {
+          // Fetch 失败（file:// 协议或网络问题），回退到策略2
+          console.warn(`Fetch failed for ${url}, falling back to direct loading...`, error.message);
+          loadWithScriptTag(url, isCss).then(resolve).catch(reject);
+        });
+    });
+  }
+
+  /**
+   * 内部函数：直接使用 <script> 或 <link> 标签加载资源
+   * @param {string} url - 资源 URL
+   * @param {boolean} isCss - 是否为 CSS
+   * @returns {Promise<void>}
+   */
+  function loadWithScriptTag(url, isCss) {
+    return new Promise((resolve, reject) => {
+      if (isCss) {
+        const link = document.createElement('link');
+        link.rel = 'stylesheet';
+        link.href = url;
+        link.onload = () => resolve();
+        link.onerror = () => reject(new Error(`Failed to load CSS: ${url}`));
+        document.head.appendChild(link);
+      } else {
+        const script = document.createElement('script');
+        script.src = url;
+        script.onload = () => resolve();
+        script.onerror = () => reject(new Error(`Failed to load JS: ${url}`));
+        document.head.appendChild(script);
       }
     });
   }
@@ -471,7 +555,7 @@ import { showShortcutsDialog } from './modules/shortcuts.js';
     // 3. 【新增】排除已知非 Markdown 文件扩展名
     const extMatch = pathname.match(/\.([a-zA-Z0-9]+)$/);
     if (extMatch) {
-      const knownNonMdExts = ['js', 'json', 'css', 'html', 'htm', 'xml', 'txt', 'csv', 'ts', 'py', 'java', 'c', 'cpp', 'h', 'php', 'rb', 'go', 'rs', 'sh', 'yaml', 'yml', 'toml', 'ini', 'log', 'sql', 'bat', 'cmd', 'ps1', 'jsx', 'tsx', 'vue', 'scss', 'sass', 'less'];
+      const knownNonMdExts = ['js', 'json', 'css', 'html', 'htm', 'xml', 'txt', 'csv', 'ts', 'py', 'java', 'c', 'cpp', 'h', 'php', 'rb', 'go', 'rs', 'sh', 'yaml', 'yml', 'toml', 'ini', 'log', 'sql', 'bat', 'cmd', 'ps1', 'jsx', 'tsx', 'vue', 'scss', 'sass', 'less', 'geojson', 'topojson'];
       if (knownNonMdExts.includes(extMatch[1].toLowerCase())) {
         return false;
       }
@@ -479,7 +563,7 @@ import { showShortcutsDialog } from './modules/shortcuts.js';
 
     // 4. 【新增】排除已知非 Markdown MIME 类型
     if (contentType) {
-      const nonMdTypes = ['javascript', 'css', 'html', 'json', 'xml', 'csv'];
+      const nonMdTypes = ['javascript', 'css', 'html', 'json', 'xml', 'csv', 'geojson', 'topojson'];
       if (nonMdTypes.some(type => contentType.includes(type))) {
         return false;
       }
@@ -726,11 +810,13 @@ import { showShortcutsDialog } from './modules/shortcuts.js';
     
     if (headers.length === 0) return '';
 
-    let tocHtml = '<div class="md-toc"><div class="md-toc-header"><h3>📑 目录</h3><button class="md-toc-toggle" title="收起/展开目录" type="button">◀</button></div><ul>';
+    // 构建目录树结构
+    const tocTree = [];
+    let currentParent = null;
+    const stack = [];
+
     headers.forEach((header, index) => {
-      // 【关键修复】直接在真实的 DOM 元素上设置 ID
       const id = `heading-${index}`;
-      // 【关键】设置 id 前保存滚动位置，防止浏览器因 hash 匹配自动滚动
       const contentAreaScroll = document.getElementById('md-content-area');
       const savedScrollTop = contentAreaScroll ? contentAreaScroll.scrollTop : window.scrollY;
       header.id = id;
@@ -738,21 +824,58 @@ import { showShortcutsDialog } from './modules/shortcuts.js';
         contentAreaScroll.scrollTo({ top: savedScrollTop });
       } else {
         window.scrollTo(0, savedScrollTop);
-      } 
+      }
       
-      // 【关键】建立映射：去除首尾空格后的文本 -> 新 ID
       const text = header.textContent.trim();
       headingIdMap[text] = id;
-
       const level = parseInt(header.tagName.substring(1));
-      // 【修改】优化缩进逻辑，每层增加 12px，最大不超过 60px 防止过宽
+
+      const item = { id, text, level, children: [] };
+
+      // 找到正确的父节点
+      while (stack.length > 0 && stack[stack.length - 1].level >= level) {
+        stack.pop();
+      }
+
+      if (stack.length === 0) {
+        tocTree.push(item);
+      } else {
+        stack[stack.length - 1].children.push(item);
+      }
+      stack.push(item);
+    });
+
+    // 递归生成 HTML
+    function renderTocNode(node, isRoot) {
+      const level = node.level;
       const indent = Math.min((level - 1) * 12, 60);
+      const hasChildren = node.children && node.children.length > 0;
+      const collapsible = getSetting('tocCollapsible') && hasChildren;
+
+      let html = `<li style="margin-left: ${indent}px; margin-bottom: 4px; font-size: ${14 - (level - 1)}px; display: flex; align-items: center; justify-content: space-between;" data-toc-level="${level}">`;
       
-      tocHtml += `<li style="margin-left: ${indent}px; margin-bottom: 4px; font-size: ${14 - (level - 1)}px;">
-        <a href="javascript:void(0)" class="toc-link" data-target="${id}" title="${header.textContent}">
-          ${header.textContent}
-        </a>
-      </li>`;
+      html += `<a href="javascript:void(0)" class="toc-link" data-target="${node.id}" title="${node.text}">${node.text}</a>`;
+      
+      if (collapsible) {
+        html += `<span class="md-toc-item-toggle" data-toggle="${node.id}">▼</span>`;
+      }
+      
+      html += '</li>';
+
+      if (hasChildren) {
+        html += `<ul class="md-toc-item-children" data-parent="${node.id}">`;
+        node.children.forEach(child => {
+          html += renderTocNode(child, false);
+        });
+        html += '</ul>';
+      }
+
+      return html;
+    }
+
+    let tocHtml = '<div class="md-toc"><div class="md-toc-header"><h3>📑 目录</h3><button class="md-toc-toggle" title="收起/展开目录" type="button">◀</button></div><ul>';
+    tocTree.forEach(node => {
+      tocHtml += renderTocNode(node, true);
     });
     tocHtml += '</ul></div>';
     return tocHtml;
@@ -897,6 +1020,10 @@ import { showShortcutsDialog } from './modules/shortcuts.js';
         <span class="md-more-item-label">✂️ 手动截图</span>
         <span class="md-more-item-shortcut"></span>
       </div>
+      <div class="md-more-item" data-action="export-pdf">
+        <span class="md-more-item-label">📄 导出 PDF</span>
+        <span class="md-more-item-shortcut"></span>
+      </div>
       <div class="md-more-item" data-action="search">
         <span class="md-more-item-label">🔍 搜索</span>
         <span class="md-more-item-shortcut">Ctrl+F</span>
@@ -909,6 +1036,11 @@ import { showShortcutsDialog } from './modules/shortcuts.js';
         <span class="md-more-item-label">📁 最近文件</span>
         <span class="md-more-item-arrow">▶</span>
         <div class="md-more-submenu" id="md-recent-submenu"></div>
+      </div>
+      <div class="md-more-divider"></div>
+      <div class="md-more-item" data-action="settings">
+        <span class="md-more-item-label">⚙️ 设置</span>
+        <span class="md-more-item-shortcut"></span>
       </div>
     `;
     document.body.appendChild(moreMenu);
@@ -923,6 +1055,24 @@ import { showShortcutsDialog } from './modules/shortcuts.js';
    */
   async function renderMarkdown() {
     if (!isMarkdownFile()) return;
+
+    // 动态添加全局样式（只在 Markdown 页面生效，避免影响其他页面）
+    document.documentElement.style.scrollBehavior = 'auto';
+    document.documentElement.style.overscrollBehavior = 'none';
+    document.documentElement.style.overflow = 'hidden';
+    document.documentElement.style.margin = '0';
+    document.documentElement.style.padding = '0';
+    document.documentElement.style.boxSizing = 'border-box';
+    document.body.style.background = 'var(--bg-color)';
+    document.body.style.overflowAnchor = 'none';
+    document.body.style.overscrollBehavior = 'none';
+    document.body.style.overflow = 'hidden';
+    document.body.style.display = 'flex';
+    document.body.style.flexDirection = 'column';
+    document.body.style.height = '100vh';
+    document.body.style.margin = '0';
+    document.body.style.padding = '0';
+    document.body.style.boxSizing = 'border-box';
 
     // 【关键】页面渲染前强制回到顶部，防止浏览器基于原始内容恢复滚动位置
     const contentAreaTop = document.getElementById('md-content-area');
@@ -1034,6 +1184,20 @@ import { showShortcutsDialog } from './modules/shortcuts.js';
           setTimeout(() => {
             window.__isClickingTOC = false;
           }, 1000);
+        }
+
+        // 处理目录折叠/展开按钮点击
+        const toggleBtn = e.target.closest('.md-toc-item-toggle');
+        if (toggleBtn) {
+          e.preventDefault();
+          e.stopPropagation();
+          const targetId = toggleBtn.getAttribute('data-toggle');
+          const childrenUl = tocContainer.querySelector(`.md-toc-item-children[data-parent="${targetId}"]`);
+          if (childrenUl) {
+            const isCollapsed = childrenUl.classList.toggle('collapsed');
+            toggleBtn.classList.toggle('collapsed', isCollapsed);
+            toggleBtn.textContent = isCollapsed ? '▶' : '▼';
+          }
         }
       });
     }
@@ -1161,7 +1325,7 @@ import { showShortcutsDialog } from './modules/shortcuts.js';
       if (lineCount > 15) {
         const foldBtn = document.createElement('button');
         foldBtn.className = 'md-code-fold-btn';
-        foldBtn.textContent = '展开';
+        foldBtn.textContent = '折叠';
         foldBtn.type = 'button';
         actions.appendChild(foldBtn);
       }
@@ -1176,15 +1340,88 @@ import { showShortcutsDialog } from './modules/shortcuts.js';
       sourceArea.readOnly = true;
       wrapper.appendChild(sourceArea);
 
-      // 代码块折叠遮罩（超过 15 行时添加）
-      if (lineCount > 15) {
-        const foldOverlay = document.createElement('div');
-        foldOverlay.className = 'md-code-fold-overlay';
-        wrapper.appendChild(foldOverlay);
-        pre.style.maxHeight = '300px';
-        pre.style.overflow = 'hidden';
+      // 代码块行号显示（根据设置）
+      if (getSetting('showLineNumbers')) {
+        addLineNumbersToCodeBlock(pre, wrapper);
       }
     });
+  }
+
+  /**
+   * 为代码块添加行号
+   * @param {HTMLElement} pre - pre 元素
+   * @param {HTMLElement} wrapper - 代码块包装器
+   */
+  function addLineNumbersToCodeBlock(pre, wrapper) {
+    // 避免重复添加
+    if (pre.parentElement && pre.parentElement.classList.contains('md-code-with-line-numbers')) {
+      return;
+    }
+    const codeEl = pre.querySelector('code');
+    if (!codeEl) return;
+    const lines = codeEl.textContent.split('\n');
+    // 移除末尾的空行
+    while (lines.length > 0 && lines[lines.length - 1].trim() === '') {
+      lines.pop();
+    }
+    if (lines.length === 0) return;
+
+    const lineNumbersDiv = document.createElement('div');
+    lineNumbersDiv.className = 'md-code-line-numbers';
+    // 获取 pre 的实际样式，确保行号对齐
+    const preStyle = window.getComputedStyle(pre);
+    const preLineHeight = preStyle.lineHeight;
+    const preFontSize = preStyle.fontSize;
+    lineNumbersDiv.style.cssText = `display:flex;flex-direction:column;padding:16px 8px 16px 12px;background:#f0f0f0;border-right:1px solid #ddd;color:#999;font-size:${preFontSize};line-height:${preLineHeight};text-align:right;user-select:none;font-family:${preStyle.fontFamily};flex-shrink:0;overflow:hidden;`;
+    if (document.querySelector('[data-theme="dark"]')) {
+      lineNumbersDiv.style.background = '#1a1d23';
+      lineNumbersDiv.style.borderRightColor = '#30363d';
+      lineNumbersDiv.style.color = '#666';
+    }
+
+    lines.forEach((_, i) => {
+      const span = document.createElement('span');
+      span.className = 'line-num';
+      span.textContent = i + 1;
+      span.style.cssText = 'display:block;';
+      lineNumbersDiv.appendChild(span);
+    });
+
+    // 将 pre 和行号包裹在一个 flex 容器中
+    const flexContainer = document.createElement('div');
+    flexContainer.className = 'md-code-with-line-numbers';
+    flexContainer.style.cssText = 'display:flex;flex-direction:row;align-items:stretch;overflow:hidden;';
+    wrapper.insertBefore(flexContainer, pre);
+    flexContainer.appendChild(lineNumbersDiv);
+    flexContainer.appendChild(pre);
+    pre.style.flex = '1';
+    pre.style.minWidth = '0';
+
+    // 同步 pre 的 max-height 到行号 div 和 flex 容器
+    const preMaxHeight = preStyle.maxHeight;
+    if (preMaxHeight && preMaxHeight !== 'none' && preMaxHeight !== 'initial' && preMaxHeight !== 'inherit') {
+      lineNumbersDiv.style.maxHeight = preMaxHeight;
+    } else {
+      // 如果没有 max-height，限制行号 div 和 pre 一样高
+      lineNumbersDiv.style.maxHeight = 'none';
+    }
+  }
+
+  /**
+   * 移除代码块的行号
+   * @param {HTMLElement} pre - pre 元素
+   */
+  function removeCodeLineNumbers(pre) {
+    const flexContainer = pre.parentElement;
+    if (flexContainer && flexContainer.classList.contains('md-code-with-line-numbers')) {
+      const wrapper = flexContainer.parentElement;
+      if (wrapper) {
+        wrapper.insertBefore(pre, flexContainer);
+        flexContainer.remove();
+        pre.style.flex = '';
+        pre.style.minWidth = '';
+      }
+    }
   }
 
   /**
@@ -1515,7 +1752,7 @@ import { showShortcutsDialog } from './modules/shortcuts.js';
    * 初始化搜索功能
    */
   function initSearchBox() {
-    let searchOverlay = document.getElementById('md-search-overlay');
+    searchOverlay = document.getElementById('md-search-overlay');
     if (!searchOverlay) {
       searchOverlay = document.createElement('div');
       searchOverlay.id = 'md-search-overlay';
@@ -1527,11 +1764,13 @@ import { showShortcutsDialog } from './modules/shortcuts.js';
       searchOverlay.addEventListener('click', (e) => {
         if (e.target === searchOverlay) {
           searchOverlay.classList.remove('active');
+          clearSearchHighlights(); // 关闭搜索时清除高亮
         }
       });
       searchOverlay.addEventListener('keydown', (e) => {
         if (e.key === 'Escape') {
           searchOverlay.classList.remove('active');
+          clearSearchHighlights(); // 按 Escape 关闭时也清除高亮
         }
       });
       let searchTimer = null;
@@ -1596,19 +1835,25 @@ import { showShortcutsDialog } from './modules/shortcuts.js';
       const nodeText = node.textContent;
       if (regex.test(nodeText)) {
         regex.lastIndex = 0;
-        const span = document.createElement('span');
-        span.innerHTML = nodeText.replace(regex, () => {
-          const index = searchIndex++;
-          return `<mark class="md-search-highlight" data-search-index="${index}">$&</mark>`;
-        });
-        const parent = node.parentNode;
-        const tempDiv = document.createElement('div');
-        tempDiv.innerHTML = span.innerHTML;
-        const fragment = document.createDocumentFragment();
-        while (tempDiv.firstChild) {
-          fragment.appendChild(tempDiv.firstChild);
+        // 使用 document.createRange 和 surroundContents 来安全地包裹匹配文本
+        const matches = [];
+        let match;
+        while ((match = regex.exec(nodeText)) !== null) {
+          matches.push({ index: match.index, length: match[0].length });
         }
-        parent.replaceChild(fragment, node);
+        
+        // 从后往前替换，避免索引偏移
+        for (let i = matches.length - 1; i >= 0; i--) {
+          const m = matches[i];
+          const range = document.createRange();
+          range.setStart(node, m.index);
+          range.setEnd(node, m.index + m.length);
+          
+          const mark = document.createElement('mark');
+          mark.className = 'md-search-highlight';
+          mark.setAttribute('data-search-index', searchIndex++);
+          range.surroundContents(mark);
+        }
       }
     });
     let html = '';
@@ -1746,11 +1991,16 @@ import { showShortcutsDialog } from './modules/shortcuts.js';
             takeManualScreenshot();
             moreMenu.classList.remove('active');
           } else if (action === 'search') {
-            const searchOverlay = document.getElementById('md-search-overlay');
             if (searchOverlay) {
               searchOverlay.classList.add('active');
               setTimeout(() => searchOverlay.querySelector('.md-search-input').focus(), 50);
             }
+            moreMenu.classList.remove('active');
+          } else if (action === 'export-pdf') {
+            exportToPDF();
+            moreMenu.classList.remove('active');
+          } else if (action === 'settings') {
+            showSettingsDialog();
             moreMenu.classList.remove('active');
           } else if (action === 'shortcuts') {
             showShortcutsDialog();
@@ -1892,6 +2142,18 @@ import { showShortcutsDialog } from './modules/shortcuts.js';
           previewContainer.style.display = 'none';
           editorContainer.value = window.__mdRawContent; // 加载当前内容
           
+          // 【自动保存草稿】加载时检查是否有未保存的草稿
+          const draftKey = getDraftKey();
+          const savedDraft = localStorage.getItem(draftKey);
+          if (savedDraft && getSetting('autoSaveDraft')) {
+            if (savedDraft !== window.__mdRawContent) {
+              if (confirm('检测到未保存的草稿，是否恢复？')) {
+                editorContainer.value = savedDraft;
+                window.__mdRawContent = savedDraft;
+              }
+            }
+          }
+          
           editBtn.innerHTML = '✅ 完成';
           editBtn.classList.add('active');
           
@@ -1910,6 +2172,10 @@ import { showShortcutsDialog } from './modules/shortcuts.js';
               tocSidebar.innerHTML = processHeadersAndGenerateTOC(previewContainer);
             }
           });
+
+          // 【自动保存草稿】退出编辑时清除草稿
+          const draftKey = getDraftKey();
+          localStorage.removeItem(draftKey);
 
           isPreviewMode = true;
           previewContainer.style.display = 'block';
@@ -1930,6 +2196,16 @@ import { showShortcutsDialog } from './modules/shortcuts.js';
       editorContainer.addEventListener('input', () => {
         if (isEditMode) {
           window.__mdRawContent = editorContainer.value;
+          
+          // 【自动保存草稿】开启时自动保存
+          if (getSetting('autoSaveDraft')) {
+            clearTimeout(window.__mdAutoSaveTimer);
+            window.__mdAutoSaveTimer = setTimeout(() => {
+              const draftKey = getDraftKey();
+              localStorage.setItem(draftKey, editorContainer.value);
+              showToast('草稿已自动保存', 1500);
+            }, 2000);
+          }
           
           // 防抖处理：停止输入 500ms 后再重新渲染，提升性能
           clearTimeout(window.__mdRenderTimer);
@@ -2123,16 +2399,24 @@ import { showShortcutsDialog } from './modules/shortcuts.js';
         if (!wrapper) return;
         const pre = wrapper.querySelector('pre');
         const sourceArea = wrapper.querySelector('.md-code-source');
+        const flexContainer = wrapper.querySelector('.md-code-with-line-numbers');
         if (pre && sourceArea) {
           if (pre.style.display === 'none') {
             // 当前是源码模式，切换到渲染模式
             pre.style.display = 'block';
             sourceArea.style.display = 'none';
+            if (flexContainer) flexContainer.style.display = 'flex';
             toggleBtn.textContent = '源码';
           } else {
             // 当前是渲染模式，切换到源码模式
             pre.style.display = 'none';
             sourceArea.style.display = 'block';
+            if (flexContainer) flexContainer.style.display = 'none';
+            // 根据内容行数计算 textarea 高度
+            const lineCount = sourceArea.value.split('\n').length;
+            const lineHeight = 14 * 1.6; // fontSize * lineHeight
+            const padding = 32; // 16px * 2
+            sourceArea.style.height = `${Math.max(lineCount * lineHeight + padding, 60)}px`;
             toggleBtn.textContent = '渲染';
           }
         }
@@ -2152,10 +2436,10 @@ import { showShortcutsDialog } from './modules/shortcuts.js';
             // 展开
             pre.style.maxHeight = 'none';
             pre.style.overflow = 'visible';
-            foldBtn.textContent = '收起';
+            foldBtn.textContent = '折叠';
             if (overlay) overlay.style.display = 'none';
           } else {
-            // 收起
+            // 折叠
             pre.style.maxHeight = '300px';
             pre.style.overflow = 'hidden';
             foldBtn.textContent = '展开';
@@ -2441,6 +2725,213 @@ import { showShortcutsDialog } from './modules/shortcuts.js';
       // 初始更新（延迟执行，确保内容渲染完成）
       setTimeout(updateProgress, 100);
     }
+  }
+
+  // ==========================================
+  // 导出 PDF 功能
+  // ==========================================
+  async function exportToPDF() {
+    const previewContainer = document.getElementById('md-preview-container');
+    if (!previewContainer) return;
+    showToast('正在生成 PDF...');
+
+    try {
+      // 动态加载 jsPDF
+      if (!window.jspdf || !window.jspdf.jsPDF) {
+        await loadExternalLib(getAssetPath('libs/jspdf.umd.min.js'));
+      }
+      // 动态加载 html2canvas
+      if (!window.html2canvas) {
+        await loadExternalLib(getAssetPath('libs/html2canvas.min.js'));
+      }
+
+      const jsPDF = window.jspdf ? window.jspdf.jsPDF : null;
+      const html2canvas = window.html2canvas;
+
+      if (!jsPDF || !html2canvas) {
+        showToast('PDF 库加载失败');
+        return;
+      }
+
+      // 使用 html2canvas 截图预览容器
+      const canvas = await html2canvas(previewContainer, {
+        scale: 1,
+        useCORS: true,
+        logging: false,
+        backgroundColor: document.documentElement.getAttribute('data-theme') === 'dark' ? '#0d1117' : '#ffffff'
+      });
+
+      const imgData = canvas.toDataURL('image/jpeg', 0.85);
+      const imgWidth = canvas.width;
+      const imgHeight = canvas.height;
+
+      // A4 尺寸（单位：pt）
+      const pageWidth = 595.28;
+      const pageHeight = 841.89;
+      const margin = 40;
+      const contentWidth = pageWidth - margin * 2;
+      const contentHeight = pageHeight - margin * 2;
+
+      // 按宽度缩放，使图片宽度适应 A4 页面
+      const scale = contentWidth / imgWidth;
+      const scaledWidth = contentWidth;
+      const scaledHeight = imgHeight * scale;
+
+      const pdf = new jsPDF('p', 'pt', 'a4');
+
+      // 如果内容高度超过一页，需要分页
+      if (scaledHeight <= contentHeight) {
+        // 单页
+        pdf.addImage(imgData, 'JPEG', margin, margin, scaledWidth, scaledHeight);
+      } else {
+        // 多页：按内容高度逐页截取
+        // 计算每页对应的原始图片高度
+        const pageImgHeight = contentHeight / scale;
+        let y = 0;
+        let pageIndex = 0;
+
+        while (y < imgHeight) {
+          if (pageIndex > 0) {
+            pdf.addPage();
+          }
+
+          // 截取当前页的 canvas 区域
+          const sliceHeight = Math.min(pageImgHeight, imgHeight - y);
+          const pageCanvas = document.createElement('canvas');
+          const pageCtx = pageCanvas.getContext('2d');
+          pageCanvas.width = imgWidth;
+          pageCanvas.height = sliceHeight;
+
+          // 绘制对应区域的图片
+          pageCtx.drawImage(canvas, 0, -y, imgWidth, imgHeight);
+
+          const pageImgData = pageCanvas.toDataURL('image/jpeg', 0.85);
+          const pageScaledHeight = sliceHeight * scale;
+          pdf.addImage(pageImgData, 'JPEG', margin, margin, scaledWidth, pageScaledHeight);
+
+          y += sliceHeight;
+          pageIndex++;
+        }
+      }
+
+      const title = document.getElementById('md-file-name')?.textContent || 'document';
+      pdf.save(`${title}.pdf`);
+      showToast('PDF 导出成功');
+    } catch (error) {
+      console.error('PDF export error:', error);
+      showToast('PDF 导出失败: ' + error.message);
+    }
+  }
+
+  // ==========================================
+  /**
+   * 显示设置弹窗
+   */
+  function showSettingsDialog() {
+    const existing = document.getElementById('md-settings-dialog');
+    if (existing) { existing.remove(); return; }
+
+    const settings = getSettings();
+    const dialog = document.createElement('div');
+    dialog.id = 'md-settings-dialog';
+    dialog.className = 'md-settings-dialog';
+    dialog.innerHTML = `
+      <div class="md-settings-overlay"></div>
+      <div class="md-settings-content">
+        <div class="md-settings-header">
+          <h3>⚙️ 设置</h3>
+          <button class="md-settings-close">&times;</button>
+        </div>
+        <div class="md-settings-body">
+          <div class="md-settings-item">
+            <div class="md-settings-item-info">
+              <span class="md-settings-item-label">代码块行号</span>
+              <span class="md-settings-item-desc">在代码块左侧显示行号</span>
+            </div>
+            <label class="md-settings-switch">
+              <input type="checkbox" id="md-setting-line-numbers" ${settings.showLineNumbers ? 'checked' : ''}>
+              <span class="md-settings-slider"></span>
+            </label>
+          </div>
+          <div class="md-settings-item">
+            <div class="md-settings-item-info">
+              <span class="md-settings-item-label">目录折叠</span>
+              <span class="md-settings-item-desc">允许折叠/展开目录节点</span>
+            </div>
+            <label class="md-settings-switch">
+              <input type="checkbox" id="md-setting-toc-collapse" ${settings.tocCollapsible ? 'checked' : ''}>
+              <span class="md-settings-slider"></span>
+            </label>
+          </div>
+          <div class="md-settings-item">
+            <div class="md-settings-item-info">
+              <span class="md-settings-item-label">自动保存草稿</span>
+              <span class="md-settings-item-desc">编辑时自动保存到本地</span>
+            </div>
+            <label class="md-settings-switch">
+              <input type="checkbox" id="md-setting-auto-save" ${settings.autoSaveDraft ? 'checked' : ''}>
+              <span class="md-settings-slider"></span>
+            </label>
+          </div>
+        </div>
+      </div>
+    `;
+    document.body.appendChild(dialog);
+
+    dialog.querySelector('.md-settings-close').addEventListener('click', () => dialog.remove());
+    dialog.querySelector('.md-settings-overlay').addEventListener('click', () => dialog.remove());
+
+    // 绑定开关事件
+    const lineNumbersSwitch = document.getElementById('md-setting-line-numbers');
+    const tocCollapseSwitch = document.getElementById('md-setting-toc-collapse');
+    const autoSaveSwitch = document.getElementById('md-setting-auto-save');
+
+    lineNumbersSwitch.addEventListener('change', (e) => {
+      setSetting('showLineNumbers', e.target.checked);
+      showToast(e.target.checked ? '代码块行号已开启' : '代码块行号已关闭');
+      // 实时更新代码块行号
+      const previewContainer = document.getElementById('md-preview-container');
+      if (previewContainer) {
+        previewContainer.querySelectorAll('.md-code-block').forEach(wrapper => {
+          const pre = wrapper.querySelector('pre');
+          if (pre) {
+            if (e.target.checked) {
+              addLineNumbersToCodeBlock(pre, wrapper);
+            } else {
+              removeCodeLineNumbers(pre);
+            }
+          }
+        });
+      }
+    });
+    tocCollapseSwitch.addEventListener('change', (e) => {
+      setSetting('tocCollapsible', e.target.checked);
+      showToast(e.target.checked ? '目录折叠已开启' : '目录折叠已关闭');
+      // 实时更新目录
+      const previewContainer = document.getElementById('md-preview-container');
+      const tocSidebar = document.getElementById('md-viewer-toc');
+      if (previewContainer && tocSidebar && CONFIG.enableTOC) {
+        tocSidebar.innerHTML = processHeadersAndGenerateTOC(previewContainer);
+      }
+    });
+    autoSaveSwitch.addEventListener('change', (e) => {
+      setSetting('autoSaveDraft', e.target.checked);
+      showToast(e.target.checked ? '自动保存已开启' : '自动保存已关闭');
+    });
+
+    // ESC 关闭
+    const escHandler = (e) => {
+      if (e.key === 'Escape') { dialog.remove(); document.removeEventListener('keydown', escHandler); }
+    };
+    document.addEventListener('keydown', escHandler);
+  }
+
+  // ==========================================
+  // 获取草稿存储键
+  // ==========================================
+  function getDraftKey() {
+    const path = window.__mdFileName || window.location.pathname.split('/').pop() || 'untitled.md';
+    return 'md-viewer-draft-' + path;
   }
 
   // ==========================================

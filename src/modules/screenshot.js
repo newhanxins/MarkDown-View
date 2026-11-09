@@ -7,7 +7,7 @@
 
 /**
  * 动态加载 html2canvas 库
- * 优先使用 window.html2canvas，否则通过 fetch 加载
+ * 使用 content.js 中暴露的全局 loadExternalLib 方法（支持多种加载策略）
  */
 async function getHtml2Canvas() {
   if (window.html2canvas) {
@@ -15,28 +15,24 @@ async function getHtml2Canvas() {
   }
 
   try {
-    // 尝试通过 fetch 加载 html2canvas
-    const url = '/libs/html2canvas.min.js';
-    const response = await fetch(url);
-    if (!response.ok) throw new Error(`Failed to load html2canvas: ${response.status}`);
-
-    const scriptContent = await response.text();
-    const blob = new Blob([scriptContent], { type: 'application/javascript' });
-    const blobUrl = URL.createObjectURL(blob);
-
-    await new Promise((resolve, reject) => {
-      const script = document.createElement('script');
-      script.src = blobUrl;
-      script.onload = () => {
-        URL.revokeObjectURL(blobUrl);
-        resolve();
-      };
-      script.onerror = () => {
-        URL.revokeObjectURL(blobUrl);
-        reject(new Error('Failed to load html2canvas script'));
-      };
-      document.head.appendChild(script);
-    });
+    // 使用全局的 loadExternalLib 方法（已在 content.js 中实现多策略加载）
+    const loadFn = window.__mdLoadExternalLib;
+    
+    // 如果全局函数不存在，尝试直接使用 script 标签加载（Web 模式回退方案）
+    if (!loadFn) {
+      console.warn('MD Viewer: loadExternalLib not found, falling back to direct script loading');
+      const url = (window.__mdGetAssetPath || ((p) => '/' + p))('libs/html2canvas.min.js');
+      await new Promise((resolve, reject) => {
+        const script = document.createElement('script');
+        script.src = url;
+        script.onload = () => resolve();
+        script.onerror = () => reject(new Error(`Failed to load html2canvas from ${url}`));
+        document.head.appendChild(script);
+      });
+    } else {
+      const url = (window.__mdGetAssetPath || ((p) => '/' + p))('libs/html2canvas.min.js');
+      await loadFn(url, false);
+    }
 
     if (window.html2canvas) {
       return window.html2canvas;
